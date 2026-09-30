@@ -1,0 +1,14 @@
+{
+	"luci-app-kringle": {
+		"description": "Grant access to Kringle settings",
+		"read": {
+			"ubus": {
+				"service": [ "list" ]
+			},
+			"uci": [ "kringle" ]
+		},
+		"write": {
+			"uci": [ "kringle" ]
+		}
+	}
+}

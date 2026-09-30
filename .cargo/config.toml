@@ -1,0 +1,5 @@
+# GL.iNet Flint 2 (GL-MT6000) is an aarch64 Cortex-A53 running OpenWrt (musl).
+# Everything in the dependency tree is pure Rust, so rust-lld plus the musl
+# objects that ship with the rustup target are enough: no C cross-compiler.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"

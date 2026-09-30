@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kringle design overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&amp;family=JetBrains+Mono:wght@500&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div style="width: 1440px; height: 1240px; box-sizing: border-box; background: #8CBCE6; background-image: linear-gradient(to bottom, #5E9BD6 0%, #8CBCE6 40%, #C6E0F2 75%, #EEF5FA 100%); color: #2B1A0C; font-family: Georgia, 'Times New Roman', serif; display: flex; flex-direction: column">
+  <div style="height: 14px; background: repeating-linear-gradient(-45deg, #B39A70 0 14px, #E6D6B6 14px 28px)"></div>
+  <div style="display: flex; flex-direction: column; gap: 36px; padding: 48px 72px 56px">
+
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; padding: 24px 32px; background: #E6D6B6; background-image: linear-gradient(180deg, rgba(255, 251, 240, 0.45), rgba(255, 251, 240, 0) 45%, rgba(120, 96, 60, 0.06)); border: 4px groove #B39A70; border-radius: 16px; box-shadow: 4px 5px 0 rgba(20, 10, 0, 0.5)">
+      <div style="display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; align-items: center; gap: 16px">
+          <svg width="72" height="72" viewBox="0 0 120 120" aria-hidden="true"><rect x="18" y="52" width="84" height="58" rx="8" fill="#9B2C1F"></rect><circle cx="34" cy="70" r="4" fill="#FFFFFF" opacity="0.5"></circle><circle cx="86" cy="92" r="4" fill="#FFFFFF" opacity="0.5"></circle><rect x="12" y="36" width="96" height="22" rx="6" fill="#9B2C1F"></rect><rect x="12" y="54" width="96" height="4" fill="#000" opacity="0.12"></rect><rect x="52" y="36" width="16" height="74" fill="#E2B94F"></rect><path d="M60 36 C44 10 20 20 32 32 C38 38 50 36 60 36 Z" fill="#E2B94F"></path><path d="M60 36 C76 10 100 20 88 32 C82 38 70 36 60 36 Z" fill="#E2B94F"></path></svg>
+          <h1 style="margin: 0; font-family: 'IM Fell English', Georgia, serif; font-weight: 400; font-size: 76px; line-height: 1;  letter-spacing: -2px">Kringle</h1>
+        </div>
+        <p style="margin: 0; font-size: 22px; line-height: 1.45; max-width: 760px">A Kris Kringle / Secret Santa gift swap. A host starts a group, shares one link, adds <strong>“never pair”</strong> rules, and draws names. Rust + htmx, no accounts.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0">
+        <span style="font-family: 'IM Fell English', Georgia, serif; font-style: italic; font-size: 30px; font-weight: 700; color: #7A1E12; transform: rotate(-3deg)">design doc · draft 4</span>
+        <span style="font-size: 15px; font-weight: 700; color: #4E341C">Desktop 1280 · Mobile 390 · Bethlehem</span>
+      </div>
+    </div>
+
+    <section style="display: flex; flex-direction: column; gap: 16px; padding: 28px 32px; background: #E6D6B6; background-image: linear-gradient(180deg, rgba(255, 251, 240, 0.45), rgba(255, 251, 240, 0) 45%, rgba(120, 96, 60, 0.06)); border: 4px groove #B39A70; border-radius: 16px; box-shadow: 4px 5px 0 rgba(20, 10, 0, 0.5)">
+      <h2 style="margin: 0; font-family: 'IM Fell English', Georgia, serif; font-weight: 400; font-size: 30px; ">How a swap flows</h2>
+      <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 14px 20px; align-items: center">
+        <span style="font-size: 15px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #7A1E12">Host</span>
+        <div style="display: flex; align-items: center; gap: 12px">
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: #9B2C1F; color: #FFF4E0; border: 3px outset #C0493A; border-radius: 12px"><strong style="font-size: 17px">1 · Start a group</strong><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">GET /</span></div>
+          <svg width="28" height="16" viewBox="0 0 28 16" fill="none" stroke="#4E341C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h22M18 2l6 6-6 6"></path></svg>
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: #9B2C1F; color: #FFF4E0; border: 3px outset #C0493A; border-radius: 12px"><strong style="font-size: 17px">2 · Host dashboard</strong><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">/g/{admin_token}</span></div>
+          <svg width="28" height="16" viewBox="0 0 28 16" fill="none" stroke="#4E341C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h22M18 2l6 6-6 6"></path></svg>
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 2px dashed #7A1E12; border-radius: 12px"><strong style="font-size: 17px">Shares invite link</strong><span style="font-size: 14px; color: #4E341C">group chat, QR, email</span></div>
+          <span style="width: 40px"></span>
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: #9B2C1F; color: #FFF4E0; border: 3px outset #C0493A; border-radius: 12px"><strong style="font-size: 17px">5 · Never pair + Draw</strong><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">POST …/rules · …/draw</span></div>
+        </div>
+        <span></span>
+        <div style="display: flex; justify-content: space-around; font-family: 'IM Fell English', Georgia, serif; font-style: italic; font-size: 22px; font-weight: 700; color: #4E341C"><span>↓ link goes out</span><span>↑ names come in, live</span><span>↓ tags appear</span></div>
+        <span style="font-size: 15px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #3F4C18">Guests</span>
+        <div style="display: flex; align-items: center; gap: 12px">
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: #3F4C18; color: #FFF4E0; border: 3px outset #7A8A45; border-radius: 12px"><strong style="font-size: 17px">3 · Join</strong><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">/j/{invite_token}</span></div>
+          <svg width="28" height="16" viewBox="0 0 28 16" fill="none" stroke="#4E341C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h22M18 2l6 6-6 6"></path></svg>
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: #3F4C18; color: #FFF4E0; border: 3px outset #7A8A45; border-radius: 12px"><strong style="font-size: 17px">4 · You’re in the hat</strong><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">/p/{personal_token}</span></div>
+          <svg width="28" height="16" viewBox="0 0 28 16" fill="none" stroke="#4E341C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h22M18 2l6 6-6 6"></path></svg>
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 2px dashed #3F4C18; border-radius: 12px"><strong style="font-size: 17px">Waits (page polls)</strong><span style="font-size: 14px; color: #4E341C">edit wishes any time</span></div>
+          <svg width="28" height="16" viewBox="0 0 28 16" fill="none" stroke="#4E341C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h22M18 2l6 6-6 6"></path></svg>
+          <div style="flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: #3F4C18; color: #FFF4E0; border: 3px outset #7A8A45; border-radius: 12px"><strong style="font-size: 17px">6 · Unwrap gift tag</strong><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">same /p/ link</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; align-items: start">
+      <section style="display: flex; flex-direction: column; gap: 12px; padding: 26px 28px; background: #E6D6B6; background-image: linear-gradient(180deg, rgba(255, 251, 240, 0.45), rgba(255, 251, 240, 0) 45%, rgba(120, 96, 60, 0.06)); border: 4px groove #B39A70; border-radius: 16px; box-shadow: 4px 5px 0 rgba(20, 10, 0, 0.5)">
+        <h2 style="margin: 0; font-family: 'IM Fell English', Georgia, serif; font-weight: 400; font-size: 26px; ">Features</h2>
+        <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 16px; line-height: 1.45">
+          <li><strong>Three kinds of link, no accounts.</strong> Admin (host only), invite (shared), personal (one per guest). All unguessable.</li>
+          <li><strong>Wish notes.</strong> Optional, editable any time. The giver always sees the latest.</li>
+          <li><strong>Never pair.</strong> Rules can be one-way or both ways, with an optional reason (“partners”, “last year”).</li>
+          <li><strong>Live draw check.</strong> Every rule change re-checks for a valid draw. If none exists, the Draw button is disabled and the page says why in plain words.</li>
+          <li><strong>Secret by default.</strong> Nobody draws themselves. The host sees who has opened their tag, never pairs or anyone’s personal link. Rules that would force a pair block the draw.</li>
+          <li><strong>Cancel &amp; reopen</strong> reopens joining; drawing again replaces every tag.</li>
+          <li><strong>One look: Bethlehem.</strong> Limestone panels and etched type over a blocky little town under the Star, with a quiet Nativity: the stable, an angel and shepherds.</li>
+        </ul>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 12px; padding: 26px 28px; background: #E6D6B6; background-image: linear-gradient(180deg, rgba(255, 251, 240, 0.45), rgba(255, 251, 240, 0) 45%, rgba(120, 96, 60, 0.06)); border: 4px groove #B39A70; border-radius: 16px; box-shadow: 4px 5px 0 rgba(20, 10, 0, 0.5)">
+        <h2 style="margin: 0; font-family: 'IM Fell English', Georgia, serif; font-weight: 400; font-size: 26px; ">htmx in use</h2>
+        <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; font-size: 15px; line-height: 1.45">
+          <li style="display: flex; flex-direction: column; gap: 3px"><code style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7A1E12">hx-post · hx-target="#rules"</code><span>Add a rule. The response swaps the rule list and, with <code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">hx-swap-oob</code>, the draw status card.</span></li>
+          <li style="display: flex; flex-direction: column; gap: 3px"><code style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7A1E12">hx-trigger="every 5s"</code><span>The host’s people list and the guest’s waiting page poll a small fragment. When names are drawn, the guest page swaps to the wrapped tag.</span></li>
+          <li style="display: flex; flex-direction: column; gap: 3px"><code style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7A1E12">hx-confirm</code><span>On Draw, Cancel draw and Remove person.</span></li>
+          <li style="display: flex; flex-direction: column; gap: 3px"><code style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7A1E12">hx-post="/p/{t}/open"</code><span>Unwrap swaps the gift box for the tag (<code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">swap:300ms</code> for the flip) and records “opened”.</span></li>
+          <li style="display: flex; flex-direction: column; gap: 3px"><code style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7A1E12">hx-boost="true"</code><span>Forms are real forms. With JS off they post and redirect, so everything still works.</span></li>
+        </ul>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 12px; padding: 26px 28px; background: #E6D6B6; background-image: linear-gradient(180deg, rgba(255, 251, 240, 0.45), rgba(255, 251, 240, 0) 45%, rgba(120, 96, 60, 0.06)); border: 4px groove #B39A70; border-radius: 16px; box-shadow: 4px 5px 0 rgba(20, 10, 0, 0.5)">
+        <h2 style="margin: 0; font-family: 'IM Fell English', Georgia, serif; font-weight: 400; font-size: 26px; ">Rust side</h2>
+        <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 16px; line-height: 1.45">
+          <li><strong>axum</strong> + <strong>askama</strong> templates: one per page, plus partials that htmx requests return.</li>
+          <li><strong>SQLite</strong> (sqlx): <code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">groups</code>, <code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">members</code>, <code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">rules</code>, <code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">assignments</code>.</li>
+          <li><strong>Tokens:</strong> 128-bit random, base32. Invite links get a friendly prefix (<code style="font-family: 'JetBrains Mono', monospace; font-size: 13px">snowy-otter-…</code>).</li>
+          <li><strong>Draw:</strong> backtracking search. Givers with the fewest options go first and candidates are shuffled. The search is exhaustive, so “impossible” is a fact, not a guess. Instant for family-sized groups.</li>
+          <li><strong>Styling</strong> is one plain CSS file: sky gradient, stone texture from layered gradients, carved and bevel borders, Georgia plus one web font.</li>
+        </ul>
+      </section>
+    </div>
+
+    <p style="margin: 0; font-size: 16px; color: #4E341C"><strong style="color: #2B1A0C">On this canvas:</strong> the Bethlehem style sheet is to the right. Below it: desktop screens, then mobile, then long names &amp; wishes. Host dashboard and gift tag boards are clickable in Play (add rules, draw, unwrap).</p>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

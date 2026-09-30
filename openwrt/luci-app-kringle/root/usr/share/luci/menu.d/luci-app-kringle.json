@@ -1,0 +1,14 @@
+{
+	"admin/services/kringle": {
+		"title": "Kringle",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "kringle"
+		},
+		"depends": {
+			"acl": [ "luci-app-kringle" ],
+			"uci": { "kringle": true }
+		}
+	}
+}

@@ -1,0 +1,73 @@
+# Test, build the OpenWrt packages, and publish the signed apk repository.
+#
+# Every push and pull request: run the tests and upload the .apk files as a
+# build artifact. Pushes to main also deploy the repository to GitHub Pages.
+#
+# Needs the repository secret APK_SIGNING_KEY: the private key matching
+# openwrt/keys/kringle.pem. Pull requests (no secret access) still build, with
+# a throwaway key, but don't deploy.
+
+name: OpenWrt packages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build packages and repository
+        env:
+          APK_SIGNING_KEY: ${{ secrets.APK_SIGNING_KEY }}
+          SDK_VOLUME: "" # fresh runner every time, no point keeping SDK state
+        run: |
+          if [ -z "$APK_SIGNING_KEY" ] && [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "::error::Set the APK_SIGNING_KEY secret; routers won't trust an index signed with a throwaway key."
+            exit 1
+          fi
+          scripts/build-openwrt.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kringle-openwrt-25.12-aarch64_cortex-a53
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: site/
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

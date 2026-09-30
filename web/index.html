@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kringle: a gift swap that runs on your router</title>
+<meta name="description" content="Kringle is a Kris Kringle / Secret Santa gift swap web app that runs on an OpenWrt router like the GL.iNet Flint 2. No accounts, no app, and nobody sees who got who.">
+<link rel="icon" href="assets/gift.svg" type="image/svg+xml">
+<style>
+@font-face{font-family:"IM Fell English";src:url(assets/fell.woff2) format("woff2");font-style:normal;font-weight:400;font-display:swap}
+@font-face{font-family:"IM Fell English";src:url(assets/fell-italic.woff2) format("woff2");font-style:italic;font-weight:400;font-display:swap}
+:root{
+  --ink:#2B1A0C;--muted:#4E341C;--stone:#E6D6B6;--stone2:#D6C29C;--field:#FBF6EA;--edge:#B39A70;--line:#A88F68;
+  --red:#9B2C1F;--red-ink:#FFF4E0;--red-text:#7A1E12;--gold:#C8962F;--gold-soft:#EAD29A;--sky-ink:#0E1C28;--sky-muted:#1B2E3C;
+  --display:"IM Fell English",Georgia,serif;--body:Georgia,"Times New Roman",serif;
+  --etch:0 1px 0 rgba(255,240,210,.6),0 -1px 0 rgba(60,30,0,.3);--shadow:4px 5px 0 rgba(20,10,0,.5);
+  --fall:linear-gradient(180deg,rgba(255,251,240,.45),rgba(255,251,240,0) 45%,rgba(120,96,60,.06));
+}
+*{box-sizing:border-box}
+html{background:#EEF5FA;scroll-behavior:smooth}
+body{margin:0;position:relative;min-height:100vh;overflow-x:hidden;color:var(--ink);font:17px/1.55 var(--body);
+  background:#8CBCE6 linear-gradient(to bottom,#5E9BD6 0%,#8CBCE6 25%,#C6E0F2 70%,#EEF5FA 100%) no-repeat;background-size:100% 100%}
+a{color:var(--red-text)}
+:focus-visible{outline:2px dotted var(--gold);outline-offset:3px}
+h1,h2,h3{font-family:var(--display);font-weight:400;margin:0;line-height:1.1}
+p{margin:0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
+
+.sky{position:absolute;inset:0 0 auto;height:720px;overflow:hidden;pointer-events:none}
+.sun{position:absolute;left:calc(50% + 180px);top:30px;width:170px;height:170px;border-radius:50%;
+  background:radial-gradient(circle,#FFF9E6 0 30%,rgba(255,249,230,.5) 45%,rgba(255,249,230,0) 70%)}
+.clouds{position:absolute;inset:0;width:100%;height:720px;object-fit:cover;object-position:50% 0}
+.town{position:absolute;left:0;bottom:0;width:100%;height:420px;object-fit:cover;object-position:50% 100%;pointer-events:none}
+
+header{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:14px 24px;background:var(--stone) var(--fall)}
+.brand{display:flex;align-items:center;gap:10px;color:var(--ink);text-decoration:none;font-family:var(--display);font-size:28px;text-shadow:var(--etch)}
+.brand img{width:34px;height:34px}
+nav{display:flex;gap:18px;flex-wrap:wrap;font-weight:700;font-size:15px}
+nav a{color:var(--ink);text-decoration:none}
+nav a:hover{color:var(--red-text);text-decoration:underline}
+.band{position:relative;z-index:1;height:10px;background:repeating-linear-gradient(-45deg,var(--edge) 0 10px,var(--stone) 10px 20px)}
+
+main{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:48px 20px 320px;display:flex;flex-direction:column;gap:56px}
+.panel{background:var(--stone) var(--fall);border:4px groove var(--edge);border-radius:15px;box-shadow:var(--shadow);padding:28px}
+.panel h2{font-size:34px;text-shadow:var(--etch);margin-bottom:12px}
+.panel h3{font-size:24px;text-shadow:var(--etch);margin-bottom:6px}
+.plate{display:inline-block;padding:3px 14px 5px;background:var(--stone) var(--fall);border:4px groove var(--edge);border-radius:10px;box-shadow:var(--shadow);
+  font-family:var(--display);font-style:italic;font-size:22px;color:var(--red-text)}
+.muted{color:var(--muted)}
+
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:40px;align-items:center}
+.hero h1{font-size:clamp(46px,7vw,78px);color:var(--sky-ink);margin:18px 0 14px}
+.hero .lead{font-size:20px;color:var(--sky-muted);font-weight:700;max-width:34em}
+.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+.btn{display:inline-flex;align-items:center;gap:10px;min-height:52px;padding:0 22px;border:3px outset #CDB68C;border-radius:10px;background:var(--stone) var(--fall);
+  color:var(--ink);font:700 17px var(--body);text-decoration:none;cursor:pointer}
+.btn.primary{border-color:#C0493A;background:var(--red);color:var(--red-ink)}
+.shot{display:block;width:100%;height:auto;border:4px groove var(--edge);border-radius:12px;box-shadow:var(--shadow);background:#8CBCE6}
+.hero .shot{transform:rotate(1.2deg)}
+
+.section-title{text-align:center;margin-bottom:24px}
+.section-title h2{font-size:clamp(34px,5vw,48px);color:var(--sky-ink)}
+.section-title p{color:var(--sky-muted);font-weight:700;margin-top:6px}
+.steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+.steps figure{margin:0;display:flex;flex-direction:column;gap:14px}
+.steps figcaption{display:flex;gap:14px;align-items:flex-start}
+.num{flex-shrink:0;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:2px outset #F0D48A;border-radius:10px;background:var(--gold);font-family:var(--display);font-size:21px}
+.phones{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+
+.features{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.features.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.features .panel{padding:22px}
+.features p{color:var(--muted)}
+
+.install{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+.install ol{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:22px}
+.install ol>li{display:flex;gap:16px}
+.install ol>li>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+.cmd{position:relative}
+pre{margin:0;padding:14px 16px;padding-right:86px;overflow-x:auto;background:#241709;color:#F6EDD6;border-radius:10px;border:2px solid #5A4630;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.copy{position:absolute;top:8px;right:8px;min-height:32px;padding:0 12px;border:2px outset #CDB68C;border-radius:8px;background:var(--stone);color:var(--ink);font:700 13px var(--body);cursor:pointer}
+.note{padding:12px 16px;border-radius:10px;background:var(--gold-soft);border:2px dashed var(--gold);font-size:15px}
+.req{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.req span{padding:5px 12px;border-radius:999px;background:var(--stone2);border:1px solid var(--line);font-size:14px;font-weight:700}
+.files{margin:8px 0 0;padding-left:20px}
+footer{position:relative;z-index:1;text-align:center;color:var(--sky-muted);font-size:14px;font-weight:700}
+footer .panel{display:inline-block;padding:12px 20px;font-weight:400;color:var(--ink)}
+
+@media (max-width:860px){
+  .hero,.steps,.features,.features.two{grid-template-columns:minmax(0,1fr)}
+  .hero .shot{transform:none}
+  main{gap:40px;padding-top:32px}
+  .panel{padding:20px}
+  .sun{left:auto;right:-40px}
+}
+</style>
+</head>
+<body>
+<div class="sky" aria-hidden="true"><div class="sun"></div><img class="clouds" src="assets/clouds.svg" alt=""></div>
+
+<header>
+  <a class="brand" href="#top"><img src="assets/gift.svg" alt=""><span>Kringle</span></a>
+  <nav aria-label="Sections">
+    <a href="#how">How it works</a>
+    <a href="#install">Install</a>
+    <a href="@REPO_URL@">Source code</a>
+  </nav>
+</header>
+<div class="band"></div>
+
+<main id="top">
+  <section class="hero">
+    <div>
+      <span class="plate">Kris Kringle · Secret Santa</span>
+      <h1>A gift swap that runs on your router</h1>
+      <p class="lead">Kringle draws names for your family or friends. Send one link, everyone adds a few gift hints, and each person unwraps their own gift tag. Nobody, not even the host, sees who got who.</p>
+      <div class="actions">
+        <a class="btn primary" href="#install">Install on your Flint 2</a>
+        <a class="btn" href="@REPO_URL@">Source on GitHub</a>
+      </div>
+    </div>
+    <img class="shot" src="assets/screenshots/tag.webp" width="1280" height="1300" alt="A gift tag reading: To Alex. Alex’s wishes: hot sauce and board games. Up to $30. From: you (shh!)">
+  </section>
+
+  <section id="how">
+    <div class="section-title">
+      <h2>How it works</h2>
+      <p>No sign-ups and no app to install. It’s just links, opened in any browser.</p>
+    </div>
+    <div class="steps">
+      <figure class="panel">
+        <img class="shot" src="assets/screenshots/create.webp" width="1280" height="1000" alt="The Start a gift swap form: group name, your name, budget and I’m in the draw too" loading="lazy">
+        <figcaption><span class="num">1</span><div><h3>Start a group</h3><span class="muted">Name it, set a budget, and choose whether you’re in the draw too. You get a private admin link.</span></div></figcaption>
+      </figure>
+      <figure class="panel">
+        <div class="phones">
+          <img class="shot" src="assets/screenshots/join-phone.webp" width="780" height="2360" alt="On a phone: Rosa invited you to The Morgans’ Christmas, with a form for your name and wishes" loading="lazy">
+          <img class="shot" src="assets/screenshots/wrapped-phone.webp" width="780" height="2160" alt="On a phone: Your gift tag is ready, with a wrapped present and an Unwrap my tag button" loading="lazy">
+        </div>
+        <figcaption><span class="num">2</span><div><h3>Everyone joins from one link</h3><span class="muted">They add their name and a few wishes and get a personal link. Their gift tag appears there once names are drawn.</span></div></figcaption>
+      </figure>
+      <figure class="panel">
+        <img class="shot" src="assets/screenshots/host.webp" width="1280" height="1560" alt="The host dashboard: invite link, who’s in, keep some people apart, and a Draw names button" loading="lazy">
+        <figcaption><span class="num">3</span><div><h3>Keep people apart, then draw</h3><span class="muted">Stop partners or last year’s pair drawing each other. Kringle checks every rule and won’t draw if the rules would give a pair away.</span></div></figcaption>
+      </figure>
+      <figure class="panel">
+        <img class="shot" src="assets/screenshots/drawn.webp" width="1280" height="900" alt="After the draw: Gift tags are out, 2 of 6 have opened their tag" loading="lazy">
+        <figcaption><span class="num">4</span><div><h3>Everyone unwraps their tag</h3><span class="muted">Each person sees only their own tag, with the latest wishes of the person they’re buying for. The host just sees who’s opened theirs.</span></div></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="features" aria-label="Features">
+    <div class="panel"><h3>Private by design</h3><p>No accounts, emails or tracking. The data stays on your router in one small file, and old groups are deleted automatically.</p></div>
+    <div class="panel"><h3>Fair and secret</h3><p>Nobody draws themselves. Rules can’t force a pair, and the host is warned if the group is small enough to guess.</p></div>
+    <div class="panel"><h3>Tiny</h3><p>One 1.3 MB program with no dependencies. It works without JavaScript and on any phone.</p></div>
+    <div class="panel"><h3>Settings in LuCI</h3><p>Port, public address and how long to keep groups are all under Services → Kringle in the router’s web interface.</p></div>
+    <div class="panel"><h3>Survives upgrades</h3><p>Settings and gift swaps are kept across OpenWrt firmware upgrades.</p></div>
+    <div class="panel"><h3>Open source</h3><p>Written in Rust and licensed under GPL-3.0. <a href="@REPO_URL@">Read the code</a> or build it yourself.</p></div>
+  </section>
+
+  <section id="install" class="install">
+    <div class="section-title">
+      <h2>Install on your Flint 2</h2>
+      <p>About five minutes, from a computer on your home network.</p>
+    </div>
+
+    <div class="panel">
+      <h3>You’ll need</h3>
+      <div class="req">
+        <span>GL.iNet Flint 2 (GL-MT6000)</span>
+        <span>OpenWrt 25.12</span>
+        <span>SSH access as root</span>
+      </div>
+      <p class="muted" style="margin-top:12px">This is for stock OpenWrt, not GL.iNet’s own firmware. Other OpenWrt 25.12 routers with an <code>aarch64_cortex-a53</code> CPU (MediaTek Filogic and similar) work the same way.</p>
+    </div>
+
+    <div class="panel">
+      <ol>
+        <li><span class="num">1</span><div>
+          <h3>Connect to the router</h3>
+          <p>Open a terminal and log in. Stock OpenWrt is at <code>192.168.1.1</code> unless you changed it.</p>
+          <div class="cmd"><pre>ssh root@192.168.1.1</pre></div>
+        </div></li>
+        <li><span class="num">2</span><div>
+          <h3>Add the Kringle package repository</h3>
+          <p>This trusts the key the packages are signed with, then tells the package manager where to find them. You only do this once.</p>
+          <div class="cmd"><pre>wget -O /etc/apk/keys/kringle.pem @PAGES_URL@/kringle.pem
+echo "@PAGES_URL@/@REPO_PATH@/packages.adb" &gt;&gt; /etc/apk/repositories.d/customfeeds.list</pre></div>
+        </div></li>
+        <li><span class="num">3</span><div>
+          <h3>Install Kringle</h3>
+          <p>This installs the Kringle server and its settings page in LuCI. It starts straight away.</p>
+          <div class="cmd"><pre>apk update
+apk add luci-app-kringle</pre></div>
+        </div></li>
+        <li><span class="num">4</span><div>
+          <h3>Open it</h3>
+          <p>In LuCI (the router’s web interface), go to <strong>Services → Kringle</strong>. The status line shows it’s running and has an <em>Open Kringle</em> link. By default that’s <code>http://192.168.1.1:8787</code>, and anyone on your Wi-Fi can use it.</p>
+          <p>If it says <em>Not running</em>, tick <em>Enabled</em> and click <em>Save &amp; Apply</em>.</p>
+        </div></li>
+        <li><span class="num">5</span><div>
+          <h3>Optional: let family outside your home join</h3>
+          <p>Allow the port through the firewall. In LuCI, go to <strong>Network → Firewall → Traffic Rules → Add</strong>. Set Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, and Action <em>accept</em>. If another router sits in front of the Flint 2, forward the port there too.</p>
+          <p>Then set <strong>Public address</strong> in Services → Kringle (for example <code>http://gifts.example.com:8787</code>), so the links Kringle hands out work from anywhere.</p>
+          <p class="note">Kringle’s links are the only keys to each group. If it’s reachable from the internet, put it behind HTTPS (a reverse proxy with a certificate) so the links can’t be read in transit.</p>
+        </div></li>
+      </ol>
+    </div>
+
+    <div class="features two">
+      <div class="panel">
+        <h3>Updating</h3>
+        <div class="cmd"><pre>apk update &amp;&amp; apk upgrade kringle luci-app-kringle</pre></div>
+        <p style="margin-top:10px">Or use LuCI → System → Software. Settings and gift swaps are kept. After a firmware upgrade, repeat steps 2 and 3.</p>
+      </div>
+      <div class="panel">
+        <h3>Removing</h3>
+        <div class="cmd"><pre>apk del luci-app-kringle kringle
+rm -rf /etc/kringle   # also delete all gift swaps</pre></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Package files</h3>
+      <p class="muted">You don’t need these if you use the repository above. They’re for installing by hand with <code>apk add --allow-untrusted</code>.</p>
+      <ul class="files">
+@FILES@
+        <li><a href="@REPO_PATH@/packages.adb">packages.adb</a>: the signed repository index</li>
+        <li><a href="kringle.pem">kringle.pem</a>: the signing key</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div class="panel">Kringle is free software under the GPL-3.0. · <a href="@REPO_URL@">GitHub</a> · Typeset in IM Fell English by Igino Marini.</div>
+  </footer>
+</main>
+
+<img class="town" src="assets/town.svg" alt="">
+
+<script>
+document.querySelectorAll(".cmd").forEach(function (box) {
+  var b = document.createElement("button");
+  b.type = "button"; b.className = "copy"; b.textContent = "Copy";
+  b.addEventListener("click", function () {
+    var text = box.querySelector("pre").textContent.replace(/\s+#.*$/gm, "");
+    navigator.clipboard.writeText(text).then(function () {
+      b.textContent = "Copied!";
+      setTimeout(function () { b.textContent = "Copy"; }, 1600);
+    });
+  });
+  box.appendChild(b);
+});
+</script>
+</body>
+</html>

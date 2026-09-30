@@ -1,0 +1,25 @@
+[package]
+name = "kringle"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A tiny Kris Kringle / Secret Santa gift swap server, small enough for a home router."
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "form", "query"] }
+getrandom = "0.4"
+maud = "0.27"
+qrcodegen = "1.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "net", "macros", "signal"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

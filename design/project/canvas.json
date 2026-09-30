@@ -1,0 +1,334 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Admin.dc.html": {
+      "h": 1560,
+      "is_interactive": true,
+      "title": "2 · Host dashboard — collecting",
+      "w": 1280,
+      "x": 1360,
+      "y": 1660
+    },
+    "AdminDrawn.dc.html": {
+      "h": 1100,
+      "is_interactive": true,
+      "title": "5 · Host dashboard — names drawn",
+      "w": 1280,
+      "x": 2720,
+      "y": 1660
+    },
+    "AdminImpossibleMobile.dc.html": {
+      "h": 2150,
+      "is_interactive": true,
+      "title": "Host — no fair draw possible",
+      "w": 390,
+      "x": 940,
+      "y": 3520
+    },
+    "AdminLong.dc.html": {
+      "h": 2000,
+      "is_interactive": true,
+      "title": "Long names · Host dashboard",
+      "w": 1280,
+      "x": 0,
+      "y": 5970
+    },
+    "AdminLongMobile.dc.html": {
+      "h": 2400,
+      "is_interactive": true,
+      "title": "Long names · Host dashboard",
+      "w": 390,
+      "x": 1360,
+      "y": 5970
+    },
+    "AdminMobile.dc.html": {
+      "h": 1800,
+      "is_interactive": true,
+      "title": "2 · Host dashboard",
+      "w": 390,
+      "x": 470,
+      "y": 3520
+    },
+    "Create.dc.html": {
+      "h": 1120,
+      "is_interactive": true,
+      "title": "1 · Start a group",
+      "w": 1280,
+      "x": 0,
+      "y": 1660
+    },
+    "CreateMobile.dc.html": {
+      "h": 1100,
+      "is_interactive": true,
+      "title": "1 · Start a group",
+      "w": 390,
+      "x": 0,
+      "y": 3520
+    },
+    "Join.dc.html": {
+      "h": 1260,
+      "title": "3 · Join",
+      "w": 1280,
+      "x": 4080,
+      "y": 1660
+    },
+    "JoinMobile.dc.html": {
+      "h": 1480,
+      "title": "3 · Join",
+      "w": 390,
+      "x": 1410,
+      "y": 3520
+    },
+    "Joined.dc.html": {
+      "h": 1120,
+      "title": "4 · You’re in the hat",
+      "w": 1280,
+      "x": 5440,
+      "y": 1660
+    },
+    "JoinedMobile.dc.html": {
+      "h": 1780,
+      "title": "4 · You’re in the hat",
+      "w": 390,
+      "x": 1880,
+      "y": 3520
+    },
+    "Main.dc.html": {
+      "h": 1240,
+      "title": "Overview",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Reveal.dc.html": {
+      "h": 1220,
+      "is_interactive": true,
+      "title": "6 · Gift tag — unwrapped",
+      "w": 1280,
+      "x": 6800,
+      "y": 1660
+    },
+    "RevealLong.dc.html": {
+      "h": 1540,
+      "is_interactive": true,
+      "title": "Long name & wishes · Gift tag",
+      "w": 1280,
+      "x": 1830,
+      "y": 5970
+    },
+    "RevealLongMobile.dc.html": {
+      "h": 1620,
+      "is_interactive": true,
+      "title": "Long name & wishes · Gift tag",
+      "w": 390,
+      "x": 3190,
+      "y": 5970
+    },
+    "RevealMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "6 · Gift tag — unwrapped",
+      "w": 390,
+      "x": 2820,
+      "y": 3520
+    },
+    "RevealWrappedMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "6 · Gift tag — wrapped",
+      "w": 390,
+      "x": 2350,
+      "y": 3520
+    },
+    "SkyAuroraCreate.dc.html": {
+      "h": 1120,
+      "is_interactive": true,
+      "title": "3 · Night · northern lights · start a group",
+      "w": 1280,
+      "x": 2720,
+      "y": 8670
+    },
+    "SkyAuroraRevealMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "3 · Night · northern lights · gift tag",
+      "w": 390,
+      "x": 2720,
+      "y": 9910
+    },
+    "SkyDawnCreate.dc.html": {
+      "h": 1120,
+      "is_interactive": true,
+      "title": "4 · Dawn · start a group",
+      "w": 1280,
+      "x": 4080,
+      "y": 8670
+    },
+    "SkyDawnRevealMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "4 · Dawn · gift tag",
+      "w": 390,
+      "x": 4080,
+      "y": 9910
+    },
+    "SkyDayCreate.dc.html": {
+      "h": 1120,
+      "is_interactive": true,
+      "title": "5 · Daytime (current) · start a group",
+      "w": 1280,
+      "x": 5440,
+      "y": 8670
+    },
+    "SkyDayRevealMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "5 · Daytime (current) · gift tag",
+      "w": 390,
+      "x": 5440,
+      "y": 9910
+    },
+    "SkyRealisticCreate.dc.html": {
+      "h": 1120,
+      "is_interactive": true,
+      "title": "2 · Night · realistic · start a group",
+      "w": 1280,
+      "x": 1360,
+      "y": 8670
+    },
+    "SkyRealisticRevealMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "2 · Night · realistic · gift tag",
+      "w": 390,
+      "x": 1360,
+      "y": 9910
+    },
+    "SkyStorybookCreate.dc.html": {
+      "h": 1120,
+      "is_interactive": true,
+      "title": "1 · Night · storybook · start a group",
+      "w": 1280,
+      "x": 0,
+      "y": 8670
+    },
+    "SkyStorybookRevealMobile.dc.html": {
+      "h": 1260,
+      "is_interactive": true,
+      "title": "1 · Night · storybook · gift tag",
+      "w": 390,
+      "x": 0,
+      "y": 9910
+    },
+    "Themes.dc.html": {
+      "h": 1240,
+      "title": "Bethlehem style sheet",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-30T08:25:42Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "longRules": {
+      "fill": "blue",
+      "maxH": 900,
+      "size": 24,
+      "text": "Long content rules\n\nInput limits (server-enforced, maxlength in forms):\n• Person name 40 chars · group name 60 · wishes 600 · rule reason 24\n\nOne-line UI (people list, rules, chips, header, selects):\n• Single line, ellipsis, full text in a tooltip (title)\n• Badges and buttons never shrink; the name gives way first\n\nHeadings (group name, “You’re in the hat, …”):\n• Wrap freely, break long unspaced words. The 60-char limit keeps it to 3 lines max.\n\nGift tag name:\n• ≤14 chars: full name at display size\n• Longer: first name big, full name small underneath\n• Size steps down with length (132 → 72px desktop, 96 → 48px mobile)\n\nWishes on the gift tag:\n• ≤90 chars: handwritten, large\n• 91–240: handwritten, smaller\n• >240: switches to body text, keeps line breaks, shows 6 lines with a fade + “Show all wishes” (expands in place, page scrolls)\n• Long links break anywhere so they never push the tag wider\n\nInitials: first + last word, skipping Jr/Sr/II/III.",
+      "w": 420,
+      "x": 3660,
+      "y": 5970
+    },
+    "rowDesktop": {
+      "kind": "title1",
+      "maxW": 8000,
+      "text": "Desktop",
+      "w": 240,
+      "x": 0,
+      "y": 1360
+    },
+    "rowLong": {
+      "kind": "title1",
+      "maxW": 4050,
+      "text": "Edge cases · long names & wishes",
+      "w": 240,
+      "x": 0,
+      "y": 5670
+    },
+    "rowMobile": {
+      "kind": "title1",
+      "maxW": 3210,
+      "text": "Mobile",
+      "w": 240,
+      "x": 0,
+      "y": 3220
+    },
+    "rowSky": {
+      "kind": "title1",
+      "maxW": 6720,
+      "text": "Sky options · Daytime is the default",
+      "w": 240,
+      "x": 0,
+      "y": 8370
+    },
+    "skyNote": {
+      "fill": "blue",
+      "maxH": 620,
+      "size": 24,
+      "text": "Sky options\n\n1 · Night storybook: lighter blue night, gold twinkle stars, the Star of Bethlehem. Most “1999 homepage”.\n2 · Night realistic: deep navy, fine stars, faint Milky Way, the Star. Darkest option.\n3 · Northern lights: soft green and violet glow above the town.\n4 · Dawn: violet to peach, last stars fading, sun glowing behind Bethlehem.\n5 · Daytime (current default): blue sky, sun, clouds; sandstone town. Text on the sky switches to dark ink.\n\nThe town’s stone, shading and lit windows are tuned to each sky. Text on the sky stays at 4.5:1 or better. Wood panels, buttons and the gift tag stay the same in all five.\n\nEvery screen has a “sky” tweak, so any board can be switched.",
+      "w": 420,
+      "x": 6840,
+      "y": 8670
+    },
+    "tryIt": {
+      "fill": "orange",
+      "maxH": 480,
+      "size": 24,
+      "text": "Try in Play:\n• Host dashboard: tap “Keep some people apart” to add or remove rules, “Edit” to remove a person, then Draw names. The draw is blocked if rules would force a pair.\n• After the draw: “See who’s opened” and “More options” (cancel & reopen).\n• Mobile “no fair draw”: remove the Alex–Sam rule. Draw turns on, with a warning that 3 people is too few to keep it secret from the host.\n• Gift tag: Unwrap / Hide it again. Long-wishes tag: Show all wishes.",
+      "w": 380,
+      "x": 3040,
+      "y": 0
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Themes.dc.html",
+    "Create.dc.html",
+    "Admin.dc.html",
+    "AdminDrawn.dc.html",
+    "Join.dc.html",
+    "Joined.dc.html",
+    "Reveal.dc.html",
+    "CreateMobile.dc.html",
+    "AdminMobile.dc.html",
+    "AdminImpossibleMobile.dc.html",
+    "JoinMobile.dc.html",
+    "JoinedMobile.dc.html",
+    "RevealWrappedMobile.dc.html",
+    "RevealMobile.dc.html",
+    "AdminLong.dc.html",
+    "AdminLongMobile.dc.html",
+    "RevealLong.dc.html",
+    "RevealLongMobile.dc.html",
+    "SkyStorybookCreate.dc.html",
+    "SkyStorybookRevealMobile.dc.html",
+    "SkyRealisticCreate.dc.html",
+    "SkyRealisticRevealMobile.dc.html",
+    "SkyAuroraCreate.dc.html",
+    "SkyAuroraRevealMobile.dc.html",
+    "SkyDawnCreate.dc.html",
+    "SkyDawnRevealMobile.dc.html",
+    "SkyDayCreate.dc.html",
+    "SkyDayRevealMobile.dc.html"
+  ],
+  "pages": [],
+  "title": "Kringle — gift swap design"
+}
