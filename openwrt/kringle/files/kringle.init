@@ -6,6 +6,42 @@ START=99
 USE_PROCD=1
 
 PROG=/usr/bin/kringle
+# Created by the package (USERID in its Makefile).
+RUN_AS=kringle
+
+log() {
+	logger -t kringle "$*"
+}
+
+# Only files Kringle writes itself.
+only_kringle_files() {
+	[ -z "$(ls -A "$1" | grep -v -x -e kringle.json -e kringle.json.tmp)" ]
+}
+
+# Use the data folder only if it is Kringle's own: new, already owned by
+# Kringle, or holding nothing but Kringle's data (e.g. left by an earlier
+# version that ran as nobody). Never take over some other directory.
+prepare_data_dir() {
+	local dir="$1" owner
+	case "$dir" in
+	/*) ;;
+	*) log "the data folder must be an absolute path, not '$dir'"; return 1 ;;
+	esac
+	[ -e "$dir" ] || mkdir -p "$dir" || return 1
+	if [ ! -d "$dir" ]; then
+		log "the data folder $dir is not a folder"
+		return 1
+	fi
+	owner=$(ls -ld "$dir" | awk '{ print $3 }')
+	if [ "$owner" != "$RUN_AS" ] && ! only_kringle_files "$dir"; then
+		log "not using $dir: it holds other files and isn't Kringle's own folder; choose a new or empty folder in Services > Kringle"
+		return 1
+	fi
+	chown -R "$RUN_AS:$RUN_AS" "$dir"
+	chmod 700 "$dir"
+	chmod 600 "$dir"/kringle.json* 2>/dev/null
+	return 0
+}
 
 start_service() {
 	local enabled port listen public_url keep_days data_dir addr
@@ -25,13 +61,12 @@ start_service() {
 		network_get_ipaddr addr lan || addr=0.0.0.0
 	fi
 
-	mkdir -p "$data_dir"
-	chown nobody "$data_dir"
+	prepare_data_dir "$data_dir" || return 1
 
 	procd_open_instance
 	procd_set_param command "$PROG" --addr "$addr:$port" --data "$data_dir/kringle.json" --keep-days "$keep_days"
 	[ -n "$public_url" ] && procd_append_param command --public-url "$public_url"
-	procd_set_param user nobody
+	procd_set_param user "$RUN_AS"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1

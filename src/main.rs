@@ -11,10 +11,13 @@
 //! illustrations are compiled in from `static/`.
 
 use std::{
+    collections::HashMap,
     convert::Infallible,
     fs,
     future::Future,
     io::{self, Write as _},
+    net::IpAddr,
+    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -42,6 +45,12 @@ const WISHES_MAX: usize = 600;
 const BUDGET_MAX: usize = 6;
 const MEMBERS_MAX: usize = 60;
 const GROUPS_MAX: usize = 1000;
+/// Groups nobody but the host ever joined are removed after this long.
+const EMPTY_GROUP_SECS: u64 = 7 * 86_400;
+/// Each address can start this many groups at once, then one more every
+/// `CREATE_EVERY_SECS`.
+const CREATE_BURST: u32 = 5;
+const CREATE_EVERY_SECS: u64 = 12 * 60;
 /// Wishes longer than this show a preview on the gift tag, with the rest
 /// behind "Show all wishes".
 const WISHES_PREVIEW: usize = 240;
@@ -123,10 +132,16 @@ fn config() -> Config {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cfg = config();
-    let store = Store::load(cfg.data.clone()).unwrap_or_else(|e| {
+    let mut store = Store::load(cfg.data.clone()).unwrap_or_else(|e| {
         eprintln!("kringle: can't read {}: {e}", cfg.data.display());
         std::process::exit(1)
     });
+    let keep_secs = cfg.keep_days * 86_400;
+    if store.prune(now(), keep_secs)
+        && let Err(e) = store.save()
+    {
+        eprintln!("kringle: saving after removing old groups failed: {e}");
+    }
     let listener = tokio::net::TcpListener::bind(&cfg.addr)
         .await
         .unwrap_or_else(|e| {
@@ -142,9 +157,25 @@ async fn main() {
     let app = Arc::new(App {
         store: Mutex::new(store),
         public_url: cfg.public_url,
-        keep_secs: cfg.keep_days * 86_400,
+        keep_secs,
+        limiter: Mutex::new(HashMap::new()),
     });
+    tokio::spawn(housekeeping(app.clone()));
     serve(listener, app, shutdown()).await;
+}
+
+/// Remove expired groups every hour, even when nobody is using the server.
+async fn housekeeping(app: Shared) {
+    let mut hourly = tokio::time::interval(Duration::from_secs(3600));
+    loop {
+        hourly.tick().await;
+        let mut st = lock(&app);
+        if st.prune(now(), app.keep_secs)
+            && let Err(e) = st.save()
+        {
+            eprintln!("kringle: saving after removing old groups failed: {e}");
+        }
+    }
 }
 
 /// Accept connections until `shutdown` resolves, one lightweight task per
@@ -152,10 +183,17 @@ async fn main() {
 /// never leaves a half-written change behind.
 async fn serve(listener: tokio::net::TcpListener, app: Shared, shutdown: impl Future<Output = ()>) {
     tokio::pin!(shutdown);
+    // At most MAX_CONNECTIONS at once; beyond that, new ones wait in the
+    // kernel's queue instead of using up memory and file descriptors.
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     loop {
-        let stream = tokio::select! {
+        let slot = tokio::select! {
+            slot = slots.clone().acquire_owned() => slot.expect("semaphore never closed"),
+            _ = &mut shutdown => return,
+        };
+        let (stream, peer) = tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => stream,
+                Ok(conn) => conn,
                 Err(e) => {
                     eprintln!("kringle: accept failed: {e}");
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -166,9 +204,11 @@ async fn serve(listener: tokio::net::TcpListener, app: Shared, shutdown: impl Fu
         };
         let app = app.clone();
         tokio::spawn(async move {
+            let _slot = slot;
+            let peer = Some(peer.ip());
             let service = service_fn(move |req| {
                 let app = app.clone();
-                async move { Ok::<_, Infallible>(handle(&app, req).await) }
+                async move { Ok::<_, Infallible>(handle(&app, peer, req).await) }
             });
             let _ = http1::Builder::new()
                 .timer(TokioTimer::new())
@@ -252,7 +292,14 @@ impl Store {
         tmp.push(".tmp");
         let tmp = PathBuf::from(tmp);
         {
-            let mut f = fs::File::create(&tmp)?;
+            // Private: the file holds every group's secret links and the draw.
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.set_permissions(fs::Permissions::from_mode(0o600))?;
             f.write_all(&bytes)?;
             f.sync_all()?;
         }
@@ -274,10 +321,15 @@ impl Store {
         })
     }
 
-    fn prune(&mut self, now: u64, keep_secs: u64) {
-        self.data
-            .groups
-            .retain(|g| now.saturating_sub(g.created) < keep_secs);
+    /// Remove groups older than `keep_secs`, and groups nobody but the host
+    /// joined within `EMPTY_GROUP_SECS`. Returns whether anything went.
+    fn prune(&mut self, now: u64, keep_secs: u64) -> bool {
+        let before = self.data.groups.len();
+        self.data.groups.retain(|g| {
+            let age = now.saturating_sub(g.created);
+            age < keep_secs && (age < EMPTY_GROUP_SECS || g.members.iter().any(|m| !m.host))
+        });
+        self.data.groups.len() != before
     }
 }
 
@@ -780,13 +832,43 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 /// Largest form we accept.
 const BODY_MAX: usize = 16 * 1024;
-/// How long a client gets to send its request headers.
+/// How long a client gets to send its request headers, and then its form.
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+const BODY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Open connections served at once.
+const MAX_CONNECTIONS: usize = 128;
 
 struct App {
     store: Mutex<Store>,
     public_url: Option<String>,
     keep_secs: u64,
+    /// Per-address allowance for starting groups: (groups left, last refill).
+    limiter: Mutex<HashMap<IpAddr, (u32, u64)>>,
+}
+
+impl App {
+    /// Whether `peer` may start another group now. Unknown peers (tests) may.
+    fn may_create(&self, peer: Option<IpAddr>, now: u64) -> bool {
+        let Some(ip) = peer else { return true };
+        let mut buckets = self.limiter.lock().unwrap_or_else(|e| e.into_inner());
+        if buckets.len() > 10_000 {
+            // Forget addresses that are back to a full allowance.
+            buckets.retain(|_, (_, last)| {
+                now.saturating_sub(*last) < CREATE_EVERY_SECS * CREATE_BURST as u64
+            });
+        }
+        let (left, last) = buckets.entry(ip).or_insert((CREATE_BURST, now));
+        let earned = now.saturating_sub(*last) / CREATE_EVERY_SECS;
+        if earned > 0 {
+            *left = (*left).saturating_add(earned as u32).min(CREATE_BURST);
+            *last += earned * CREATE_EVERY_SECS;
+        }
+        if *left == 0 {
+            return false;
+        }
+        *left -= 1;
+        true
+    }
 }
 
 type Shared = Arc<App>;
@@ -798,7 +880,7 @@ fn lock(app: &App) -> MutexGuard<'_, Store> {
 
 /// Route a request. Paths are split on `/`; a known path with the wrong method
 /// gets 405, anything else 404. Every response gets the security headers.
-async fn handle<B>(app: &App, req: Request<B>) -> Res
+async fn handle<B>(app: &App, peer: Option<IpAddr>, req: Request<B>) -> Res
 where
     B: hyper::body::Body<Data = Bytes>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -810,13 +892,13 @@ where
     let mut res = match segs.as_slice() {
         [""] if get => index(),
         ["groups"] if post => match read_form(body).await {
-            Some(f) => create(app, &f),
-            None => too_large(),
+            Ok(f) => create(app, peer, &f),
+            Err(res) => *res,
         },
         ["g", t] if get => admin(app, t, query, h),
         ["g", t, "rules"] if post => match read_form(body).await {
-            Some(f) => add_rule(app, t, &f),
-            None => too_large(),
+            Ok(f) => add_rule(app, t, &f),
+            Err(res) => *res,
         },
         ["g", t, "rules", i, "delete"] if post => match i.parse() {
             Ok(i) => remove_rule(app, t, i),
@@ -828,15 +910,17 @@ where
         },
         ["g", t, "draw"] if post => draw_names(app, t),
         ["g", t, "undraw"] if post => undraw(app, t),
+        ["g", t, "delete"] if post => delete_group(app, t),
+        ["deleted"] if get => page(deleted_page()),
         ["j", t] if get => join(app, t, h),
         ["j", t] if post => match read_form(body).await {
-            Some(f) => join_post(app, t, &f),
-            None => too_large(),
+            Ok(f) => join_post(app, t, &f),
+            Err(res) => *res,
         },
         ["p", t] if get => me(app, t, query, h),
         ["p", t, "wishes"] if post => match read_form(body).await {
-            Some(f) => save_wishes(app, t, &f),
-            None => too_large(),
+            Ok(f) => save_wishes(app, t, &f),
+            Err(res) => *res,
         },
         ["p", t, "open"] if post => unwrap_tag(app, t),
         ["p", t, "state"] if get => draw_state(app, t),
@@ -853,7 +937,8 @@ fn is_route(segs: &[&str]) -> bool {
         segs,
         [""] | ["groups"]
             | ["g", _]
-            | ["g", _, "rules" | "draw" | "undraw"]
+            | ["deleted"]
+            | ["g", _, "rules" | "draw" | "undraw" | "delete"]
             | ["g", _, "rules" | "people", _, "delete"]
             | ["j", _]
             | ["p", _]
@@ -879,18 +964,27 @@ impl Form {
     }
 }
 
-/// Read an urlencoded form body, or `None` if it's over `BODY_MAX`.
-async fn read_form<B>(body: B) -> Option<Form>
+/// Read an urlencoded form body: at most `BODY_MAX` bytes, arriving within
+/// `BODY_TIMEOUT`. Otherwise the response to send instead.
+async fn read_form<B>(body: B) -> Result<Form, Box<Res>>
 where
     B: hyper::body::Body<Data = Bytes>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    let bytes = Limited::new(body, BODY_MAX)
-        .collect()
-        .await
-        .ok()?
-        .to_bytes();
-    Some(Form(form_urlencoded::parse(&bytes).into_owned().collect()))
+    match tokio::time::timeout(BODY_TIMEOUT, Limited::new(body, BODY_MAX).collect()).await {
+        Ok(Ok(collected)) => Ok(Form(
+            form_urlencoded::parse(&collected.to_bytes())
+                .into_owned()
+                .collect(),
+        )),
+        Ok(Err(e)) if e.is::<http_body_util::LengthLimitError>() => Err(Box::new(too_large())),
+        Ok(Err(_)) => Err(Box::new(status(StatusCode::BAD_REQUEST))),
+        Err(_) => Err(Box::new(respond(
+            StatusCode::REQUEST_TIMEOUT,
+            "text/plain; charset=utf-8",
+            "That took too long to arrive.",
+        ))),
+    }
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -1073,7 +1167,7 @@ fn index() -> Res {
     ))
 }
 
-fn create(app: &App, form: &Form) -> Res {
+fn create(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
     let f = CreateForm {
         group: form.get("group"),
         host: form.get("host"),
@@ -1097,6 +1191,14 @@ fn create(app: &App, form: &Form) -> Res {
     };
     if let Some(e) = error {
         return page(create_page(&f, Some(e)));
+    }
+    if !app.may_create(peer, now()) {
+        let mut res = page(create_page(
+            &f,
+            Some("You’ve started several groups in a short time. Try again in a little while."),
+        ));
+        *res.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+        return res;
     }
     let mut st = lock(app);
     st.prune(now(), app.keep_secs);
@@ -1200,13 +1302,19 @@ fn add_rule(app: &App, t: &str, f: &Form) -> Res {
             return Some("same");
         }
         let both = f.has("both");
-        let dup = g.rules.iter().any(|r| {
+        // An existing rule between the same two people either already covers
+        // this one, or gets upgraded to both ways (e.g. B -> A, then A <-> B).
+        let same_pair = |r: &Rule| {
             (r.giver == giver && r.receiver == receiver)
-                || (r.both && r.giver == receiver && r.receiver == giver)
-                || (both && r.giver == receiver && r.receiver == giver)
-        });
-        if dup {
-            return Some("dup");
+                || (r.giver == receiver && r.receiver == giver)
+        };
+        if let Some(r) = g.rules.iter_mut().find(|r| same_pair(r)) {
+            let covered = r.both || (!both && r.giver == giver);
+            if covered {
+                return Some("dup");
+            }
+            r.both = true;
+            return None;
         }
         g.rules.push(Rule {
             giver,
@@ -1262,6 +1370,19 @@ fn draw_names(app: &App, t: &str) -> Res {
         g.drawn = Some(now());
         None
     })
+}
+
+fn delete_group(app: &App, t: &str) -> Res {
+    let mut st = lock(app);
+    let Some(i) = st.data.groups.iter().position(|g| g.admin == t) else {
+        return not_found();
+    };
+    let gone = st.data.groups.remove(i);
+    if let Err(e) = st.save() {
+        st.data.groups.insert(i, gone);
+        return save_failed(e);
+    }
+    to("/deleted".into())
 }
 
 fn undraw(app: &App, t: &str) -> Res {
@@ -1405,6 +1526,9 @@ fn unwrap_tag(app: &App, t: &str) -> Res {
     if !g.members[i].opened {
         g.members[i].opened = true;
         if let Err(e) = st.save() {
+            if let Some((g, i)) = st.by_personal(t) {
+                g.members[i].opened = false;
+            }
             return save_failed(e);
         }
     }
@@ -1730,6 +1854,32 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     }
                     p.muted.small { "Joining closes when you draw. You won’t see who got who." }
                 }
+            }
+
+            section.panel {
+                details.disclose {
+                    summary { "Delete this group" }
+                    div.inset {
+                        p { "This removes the group, everyone’s wishes and the draw for good. All of its links stop working." }
+                        form method="post" action=(format!("{admin_path}/delete")) data-confirm=(format!("Delete “{}” and everything in it for good?", g.name)) {
+                            button.btn type="submit" { "Delete group" }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+fn deleted_page() -> Markup {
+    layout(
+        "Group deleted · Kringle",
+        html! {},
+        html! {
+            section.panel {
+                h1 { "Group deleted" }
+                p { "The group, its wishes and its draw are gone, and its links no longer work." }
+                a.btn href="/" { "Start a new gift swap" }
             }
         },
     )
@@ -2227,6 +2377,7 @@ mod tests {
             store: Mutex::new(Store::load(path.clone()).unwrap()),
             public_url: Some("http://kringle.test".into()),
             keep_secs: 86_400,
+            limiter: Mutex::new(HashMap::new()),
         });
         (app, path)
     }
@@ -2257,6 +2408,17 @@ mod tests {
 
     /// Send a request through the same routing the server uses.
     async fn req(app: &Shared, method: &str, uri: &str, form: &str, cookie: Option<&str>) -> Reply {
+        req_from(app, None, method, uri, form, cookie).await
+    }
+
+    async fn req_from(
+        app: &Shared,
+        peer: Option<IpAddr>,
+        method: &str,
+        uri: &str,
+        form: &str,
+        cookie: Option<&str>,
+    ) -> Reply {
         let mut b = Request::builder().method(method).uri(uri);
         if method == "POST" {
             b = b.header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
@@ -2266,6 +2428,7 @@ mod tests {
         }
         let res = handle(
             app,
+            peer,
             b.body(Full::new(Bytes::from(form.to_string()))).unwrap(),
         )
         .await;
@@ -2655,6 +2818,203 @@ mod tests {
             StatusCode::PAYLOAD_TOO_LARGE
         );
         assert!(lock(&r).data.groups.is_empty(), "nothing was created");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn stronger_rules_upgrade_instead_of_being_refused() {
+        let (r, path) = test_app();
+        let (admin, invite) = start(&r, "group=Flat&host=Jo").await;
+        for name in ["Alex", "Sam", "Kim", "Lee"] {
+            join(&r, &invite, &format!("name={name}")).await;
+        }
+        let rules = format!("{admin}/rules");
+        let rule_of = |r: &Shared, a: u32, b: u32| {
+            let st = lock(r);
+            let g = &st.data.groups[0];
+            g.rules
+                .iter()
+                .find(|x| (x.giver, x.receiver) == (a, b) || (x.giver, x.receiver) == (b, a))
+                .map(|x| (x.giver, x.receiver, x.both))
+        };
+        // Members: Alex 1, Sam 2, Kim 3, Lee 4.
+        // One way Sam -> Alex, then Alex <-> Sam: upgraded, not refused.
+        post(&r, &rules, "giver=2&receiver=1").await;
+        assert_eq!(
+            post(&r, &rules, "giver=1&receiver=2&both=1").await.to(),
+            admin
+        );
+        assert_eq!(rule_of(&r, 1, 2), Some((2, 1, true)));
+        let a = lock(&r).data.groups[0].allowed();
+        assert!(!a[0][1] && !a[1][0], "Alex and Sam can't draw each other");
+        // One way Kim -> Lee, then Lee -> Kim one way: that's both ways too.
+        post(&r, &rules, "giver=3&receiver=4").await;
+        assert_eq!(post(&r, &rules, "giver=4&receiver=3").await.to(), admin);
+        assert_eq!(rule_of(&r, 3, 4), Some((3, 4, true)));
+        // Anything already covered is still "already exists".
+        assert!(
+            post(&r, &rules, "giver=1&receiver=2")
+                .await
+                .to()
+                .ends_with("?err=dup")
+        );
+        assert!(
+            post(&r, &rules, "giver=4&receiver=3&both=1")
+                .await
+                .to()
+                .ends_with("?err=dup")
+        );
+        assert_eq!(lock(&r).data.groups[0].rules.len(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn starting_groups_is_rate_limited_per_address() {
+        let (r, path) = test_app();
+        let a: IpAddr = "192.0.2.1".parse().unwrap();
+        let b: IpAddr = "192.0.2.2".parse().unwrap();
+        for _ in 0..CREATE_BURST {
+            let res = req_from(&r, Some(a), "POST", "/groups", "group=G&host=H", None).await;
+            assert_eq!(res.status, StatusCode::SEE_OTHER);
+        }
+        let res = req_from(&r, Some(a), "POST", "/groups", "group=G&host=H", None).await;
+        assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(res.has("Try again in a little while"));
+        let res = req_from(&r, Some(b), "POST", "/groups", "group=G&host=H", None).await;
+        assert_eq!(
+            res.status,
+            StatusCode::SEE_OTHER,
+            "other addresses aren't affected"
+        );
+        // The allowance comes back over time.
+        assert!(r.may_create(Some(a), now() + CREATE_EVERY_SECS));
+        assert!(!r.may_create(Some(a), now() + CREATE_EVERY_SECS));
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn host_can_delete_a_group() {
+        let (r, path) = test_app();
+        let (admin, invite) = start(&r, "group=Flat&host=Jo&plays=1").await;
+        let alex = join(&r, &invite, "name=Alex").await;
+        assert!(get(&r, &admin).await.has("Delete this group"));
+        assert_eq!(
+            get(&r, &format!("{admin}/delete")).await.status,
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            post(&r, &format!("{admin}/delete"), "").await.to(),
+            "/deleted"
+        );
+        assert!(get(&r, "/deleted").await.has("Group deleted"));
+        for link in [&admin, &invite, &alex] {
+            assert_eq!(get(&r, link).await.status, StatusCode::NOT_FOUND, "{link}");
+        }
+        assert!(Store::load(path.clone()).unwrap().data.groups.is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn old_and_never_joined_groups_are_pruned() {
+        let path = std::env::temp_dir().join(format!("kringle-test-{}.json", token()));
+        let mut st = Store::load(path).unwrap();
+        let group = |created: u64, guest: bool| Group {
+            name: "G".into(),
+            host: "H".into(),
+            budget: String::new(),
+            admin: token(),
+            invite: token(),
+            created,
+            drawn: None,
+            next_id: 3,
+            members: [(1, true), (2, false)]
+                .into_iter()
+                .filter(|&(_, host)| host || guest)
+                .map(|(id, host)| Member {
+                    id,
+                    name: format!("M{id}"),
+                    wishes: String::new(),
+                    token: token(),
+                    host,
+                    opened: false,
+                    gives_to: None,
+                })
+                .collect(),
+            rules: Vec::new(),
+        };
+        let day = 86_400;
+        let t = 1_000 * day;
+        st.data.groups = vec![
+            group(t - day, false),      // new and empty: kept
+            group(t - 8 * day, false),  // a week old, nobody joined: removed
+            group(t - 8 * day, true),   // a week old with a guest: kept
+            group(t - 121 * day, true), // past keep_days: removed
+        ];
+        assert!(st.prune(t, 120 * day));
+        let ages: Vec<u64> = st
+            .data
+            .groups
+            .iter()
+            .map(|g| (t - g.created) / day)
+            .collect();
+        assert_eq!(ages, [1, 8]);
+        assert!(!st.prune(t, 120 * day), "nothing more to remove");
+    }
+
+    #[tokio::test]
+    async fn data_file_is_private_and_failed_unwrap_is_rolled_back() {
+        let (r, path) = test_app();
+        let (admin, invite) = start(&r, "group=Flat&host=Jo").await;
+        let people: Vec<String> = {
+            let mut v = Vec::new();
+            for n in ["Alex", "Sam", "Kim"] {
+                v.push(join(&r, &invite, &format!("name={n}")).await);
+            }
+            v
+        };
+        post(&r, &format!("{admin}/draw"), "").await;
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "kringle.json is readable only by Kringle");
+
+        // Make saving fail: point the store at a directory.
+        let dir = std::env::temp_dir().join(format!("kringle-dir-{}", token()));
+        fs::create_dir(&dir).unwrap();
+        lock(&r).path = dir.clone();
+        let res = post(&r, &format!("{}/open", people[0]), "").await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            !lock(&r).data.groups[0].members[0].opened,
+            "unwrap rolled back"
+        );
+        assert!(get(&r, &admin).await.has("0 of 3 have opened"));
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(path);
+    }
+
+    /// A request body that never arrives.
+    struct Stalled;
+
+    impl hyper::body::Body for Stalled {
+        type Data = Bytes;
+        type Error = Infallible;
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Infallible>>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_form_bodies_time_out() {
+        let (r, path) = test_app();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/groups")
+            .body(Stalled)
+            .unwrap();
+        let res = handle(&r, None, req).await;
+        assert_eq!(res.status(), StatusCode::REQUEST_TIMEOUT);
         let _ = fs::remove_file(path);
     }
 

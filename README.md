@@ -81,8 +81,14 @@ the service.
 | Delete groups after (days) | `keep_days`   | `120`          |
 | Data folder                | `data_dir`    | `/etc/kringle` |
 
-The service runs as `nobody` and restarts itself if it stops. It logs to the
-system log (`logread -e kringle`).
+The service runs as its own `kringle` user, created when the package is
+installed, and restarts itself if it stops. It logs to the system log
+(`logread -e kringle`).
+
+The data folder is private to that user (0700, with the data file 0600).
+Kringle only uses a folder that is its own: a new one, one it already owns,
+or one holding nothing but its data file. If *Data folder* points anywhere
+else (say `/etc`), the service refuses to start and says why in the log.
 
 ### Reaching it from outside your home
 
@@ -188,8 +194,20 @@ The binary also runs on its own:
 | `--public-url` | `KRINGLE_PUBLIC_URL` | the host the browser used  |
 | `--keep-days`  | `KRINGLE_KEEP_DAYS`  | `120`                      |
 
-The limits are 60 people per group and 1000 groups per server. Names can be
-up to 40 characters, group names 60 and wishes 600.
+Groups are deleted `--keep-days` after they were created. Groups nobody but
+the host joined are deleted after a week. Hosts can also delete their group
+from the bottom of the admin page. Clean-up runs at start-up and hourly.
+
+Limits, to keep a small router responsive even with the port open to the
+internet:
+
+- Each address can start 5 groups, then one more every 12 minutes. The server
+  holds 1000 groups at most.
+- 60 people per group. Names can be up to 40 characters, group names 60 and
+  wishes 600.
+- Forms are capped at 16 KB and must arrive within 10 seconds, as must request
+  headers.
+- At most 128 connections are served at once.
 
 ## Privacy
 

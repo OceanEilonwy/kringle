@@ -70,9 +70,13 @@ SDK_VOLUME="${SDK_VOLUME-kringle-sdk-$tag}"
 set -- -v "$PWD/openwrt:/feed:ro" -v "$PWD/dist:/dist"
 [ -n "$SDK_VOLUME" ] && set -- "$@" -v "$SDK_VOLUME:/builder"
 
-docker run --rm -e APK_KEY="$key" "$@" "$SDK_IMAGE" sh -euc '
+# The key reaches the container through the environment (-e APK_KEY without a
+# value), never on docker's command line where other local users could see it.
+APK_KEY="$key" docker run --rm -e APK_KEY "$@" "$SDK_IMAGE" sh -euc '
 	[ -x ./setup.sh ] && [ ! -f rules.mk ] && ./setup.sh
 
+	# Remove the private key from the (possibly persistent) SDK tree on exit.
+	trap "rm -f private-key.pem" EXIT
 	rm -f private-key.pem public-key.pem
 	if [ -n "$APK_KEY" ]; then
 		(umask 077 && printf "%s\n" "$APK_KEY" > private-key.pem)

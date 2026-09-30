@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=kringle
-PKG_VERSION:=0.1.1
+PKG_VERSION:=0.1.2
 PKG_RELEASE:=1
 
 PKG_LICENSE:=GPL-3.0-or-later
@@ -20,6 +20,8 @@ define Package/kringle
   SUBMENU:=Web Servers/Proxies
   TITLE:=Kris Kringle / Secret Santa gift swap server
   DEPENDS:=@(aarch64)
+  # Runs as its own user; created on install by the package scripts.
+  USERID:=kringle:kringle
 endef
 
 define Package/kringle/description
