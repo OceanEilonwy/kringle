@@ -1,7 +1,9 @@
 # Test, build the OpenWrt packages, and publish the signed apk repository.
 #
 # Every push and pull request: run the tests and upload the .apk files as a
-# build artifact. Pushes to main also deploy the repository to GitHub Pages.
+# build artifact. Pushes to main also deploy the repository to GitHub Pages
+# and, when the version in Cargo.toml is new, publish a GitHub release with
+# the packages attached (scripts/release.sh).
 #
 # Needs the repository secret APK_SIGNING_KEY: the private key matching
 # openwrt/keys/kringle.pem. Pull requests (no secret access) still build, with
@@ -71,3 +73,22 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kringle-openwrt-25.12-aarch64_cortex-a53
+          path: dist
+
+      - name: Release this version if it's new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release.sh

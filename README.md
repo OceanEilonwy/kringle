@@ -57,6 +57,12 @@ Services › Kringle shows whether it's running and links to it, which is
 `http://192.168.1.1:8787` by default. If it says *Not running*, tick
 *Enabled* and Save & Apply.
 
+**Or download the packages** from the
+[Releases page](https://github.com/OceanEilonwy/kringle/releases). They're
+signed with the same key, so once `kringle.pem` is trusted (step 1 above) they
+install with System › Software › **Upload Package…** (the server first, then
+the LuCI app) or `apk add ./kringle-*.apk ./luci-app-kringle-*.apk`.
+
 To update, click **Update lists…** in System › Software and check the
 *Updates* tab, or run `apk update && apk upgrade kringle luci-app-kringle`.
 Settings and data are kept.
@@ -146,7 +152,15 @@ The screenshots are taken from the real app. `scripts/screenshots.sh` runs
 it with a demo group and captures the pages with headless Chromium. It needs
 ImageMagick for WebP. Re-run it after UI changes and commit the new images.
 
-**Signing key.** Routers trust `openwrt/keys/kringle.pem`. The matching
+**Releases.** When a push to `main` carries a new version in `Cargo.toml`,
+the workflow also publishes a GitHub release (`v0.1.1`, …) with both packages
+and the key attached (`scripts/release.sh`). Existing releases are never
+changed. Bump the version to cut a new one, and bump `PKG_VERSION` in
+`openwrt/kringle/Makefile` with it.
+
+**Signing key.** Routers trust `openwrt/keys/kringle.pem`. The SDK signs only
+the repository index, so the build also signs each `.apk` with
+`apk adbsign`. That's what lets a downloaded package install directly. The matching
 private key is the `APK_SIGNING_KEY` repository secret, and a local copy
 lives at `~/.config/kringle/apk-signing-key.pem`. The script refuses a key
 that doesn't match the committed public key.

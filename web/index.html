@@ -287,7 +287,7 @@ rm -rf /etc/kringle   # also delete all gift swaps</pre></div>
 
     <div class="panel">
       <h3>Package files</h3>
-      <p class="muted">You don’t need these if you use the repository above. They’re for installing by hand with <code>apk add --allow-untrusted</code>.</p>
+      <p class="muted">You don’t need these if you use the repository above. They’re signed with the Kringle key, so once it’s trusted (step 2 above) you can also install them directly: upload them in <span class="path inline">System <b>›</b> Software <b>›</b> Upload Package…</span> (server first, then the LuCI app), or use <code>apk add</code>. Every version is also on the <a href="@REPO_URL@/releases">GitHub Releases page</a>.</p>
       <ul class="files">
 @FILES@
         <li><a href="@REPO_PATH@/packages.adb">packages.adb</a>: the signed repository index</li>

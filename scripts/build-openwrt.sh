@@ -93,6 +93,17 @@ docker run --rm -e APK_KEY="$key" "$@" "$SDK_IMAGE" sh -euc '
 	# Rebuild ours from scratch each time; drop earlier versions from the repository.
 	rm -rf bin/packages/*/kringle build_dir/target-*/kringle-* build_dir/target-*/luci-app-kringle*
 	make package/kringle/compile package/luci-app-kringle/compile -j"$(nproc)"
+	# The SDK builds packages unsigned (only the index is signed). Sign them too,
+	# so a downloaded .apk installs directly (apk add, or LuCI Upload Package)
+	# on any router that trusts kringle.pem.
+	if [ -n "$APK_KEY" ]; then
+		mkdir -p /tmp/kringle-keys
+		cp public-key.pem /tmp/kringle-keys/kringle.pem
+		for f in bin/packages/*/kringle/*.apk; do
+			staging_dir/host/bin/apk --allow-untrusted adbsign --sign-key private-key.pem "$f"
+			staging_dir/host/bin/apk --keys-dir /tmp/kringle-keys verify "$f"
+		done
+	fi
 	make package/index
 	cp bin/packages/*/kringle/* /dist/repo/
 '
