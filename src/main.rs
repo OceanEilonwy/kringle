@@ -1460,7 +1460,7 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     h2 { "Gift tags are out" }
                     p { strong { (opened) " of " (n) " have opened their tag" } }
                     div.bar role="img" aria-label=(format!("{opened} of {n} opened")) {
-                        span style=(format!("width: {}%", if n == 0 { 0 } else { opened * 100 / n })) {}
+                        span style=(format!("width: {}%", (opened * 100).checked_div(n).unwrap_or(0))) {}
                     }
                     p { "Everyone sees only their own tag. You see who’s opened theirs, never who they got." }
                 }

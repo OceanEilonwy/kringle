@@ -80,15 +80,20 @@ system log (`logread -e kringle`).
 
 ### Reaching it from outside your home
 
-1. Allow the port in the firewall. In LuCI, go to Network → Firewall →
-   Traffic Rules → Add. Set Protocol TCP, Source zone `wan`, Destination zone
-   *Device (input)*, Destination port `8787`, Action *accept*. If another
-   router sits in front of the Flint 2, forward the port there too.
-2. Set **Public address** (for example `http://gifts.example.com:8787`) so
-   the invite and personal links Kringle hands out work from outside.
+By default only people on your Wi-Fi can open Kringle. To let others in,
+forward its port:
 
-Kringle speaks plain HTTP. If it's reachable from the internet, put TLS in
-front of it, because the links are the only keys.
+1. In LuCI, go to Network → Firewall → Traffic Rules → Add. Set Protocol TCP,
+   Source zone `wan`, Destination zone *Device (input)*, Destination port
+   `8787`, Action *accept*. If another router or modem sits in front of the
+   Flint 2, forward TCP port 8787 to it there too.
+2. Set **Public address** to your internet address and port (for example
+   `http://203.0.113.7:8787`, shown under Status → Overview), so the invite
+   and personal links Kringle hands out work from outside.
+
+Kringle serves plain HTTP. If you want HTTPS, put your own reverse proxy in
+front of it. Kringle respects `X-Forwarded-Proto` and `X-Forwarded-Host`, so
+its links follow the proxy's address.
 
 Guests on the guest Wi-Fi can't reach it by default, because the guest zone
 blocks traffic to the router.

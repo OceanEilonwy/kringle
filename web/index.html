@@ -263,11 +263,11 @@ service kringle start</pre></div>
 
     <div class="panel">
       <h3>Optional: let family outside your home join</h3>
+      <p>By default only people on your Wi-Fi can open Kringle. To let others in, forward its port.</p>
       <p class="path">Network <b>›</b> Firewall <b>›</b> <em>Traffic Rules</em> tab <b>›</b> Add</p>
-      <p>Name it <em>Kringle</em>. Set Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, and Action <em>accept</em>. Click <strong>Save</strong>, then <strong>Save &amp; Apply</strong>. If another router sits in front of the Flint 2, forward the port there too.</p>
+      <p>Name it <em>Kringle</em>. Set Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, and Action <em>accept</em>. Click <strong>Save</strong>, then <strong>Save &amp; Apply</strong>. If another router or modem sits in front of the Flint 2, forward TCP port 8787 to the Flint 2 there too.</p>
       <p class="path" style="margin-top:14px">Services <b>›</b> Kringle</p>
-      <p>Set <strong>Public address</strong> to the address people use from outside (for example <code>http://gifts.example.com:8787</code>), so the links Kringle hands out work from anywhere.</p>
-      <p class="note">Kringle’s links are the only keys to each group. If it’s reachable from the internet, put it behind HTTPS (a reverse proxy with a certificate) so the links can’t be read in transit.</p>
+      <p>Set <strong>Public address</strong> to your internet address with the port, for example <code>http://203.0.113.7:8787</code>, so the links Kringle hands out work from anywhere. Your internet address is on <span class="path inline">Status <b>›</b> Overview</span> under <em>IPv4 Upstream</em>.</p>
     </div>
 
     <div class="features two">
