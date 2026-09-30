@@ -11,21 +11,24 @@
 //! illustrations are compiled in from `static/`.
 
 use std::{
+    convert::Infallible,
     fs,
+    future::Future,
     io::{self, Write as _},
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use axum::{
-    Router,
-    extract::{DefaultBodyLimit, Form, Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
-    middleware,
-    response::{Html, IntoResponse, Redirect, Response},
-    routing::{get, post},
+use http_body_util::{BodyExt as _, Full, Limited};
+use hyper::{
+    Method, Request, Response, StatusCode,
+    body::Bytes,
+    header::{self, HeaderMap, HeaderValue},
+    server::conn::http1,
+    service::service_fn,
 };
+use hyper_util::rt::{TokioIo, TokioTimer};
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 use serde::{Deserialize, Serialize};
 
@@ -141,12 +144,38 @@ async fn main() {
         public_url: cfg.public_url,
         keep_secs: cfg.keep_days * 86_400,
     });
-    if let Err(e) = axum::serve(listener, router(app))
-        .with_graceful_shutdown(shutdown())
-        .await
-    {
-        eprintln!("kringle: server error: {e}");
-        std::process::exit(1)
+    serve(listener, app, shutdown()).await;
+}
+
+/// Accept connections until `shutdown` resolves, one lightweight task per
+/// connection. Saves happen synchronously under the store lock, so stopping
+/// never leaves a half-written change behind.
+async fn serve(listener: tokio::net::TcpListener, app: Shared, shutdown: impl Future<Output = ()>) {
+    tokio::pin!(shutdown);
+    loop {
+        let stream = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => stream,
+                Err(e) => {
+                    eprintln!("kringle: accept failed: {e}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            },
+            _ = &mut shutdown => return,
+        };
+        let app = app.clone();
+        tokio::spawn(async move {
+            let service = service_fn(move |req| {
+                let app = app.clone();
+                async move { Ok::<_, Infallible>(handle(&app, req).await) }
+            });
+            let _ = http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEADER_TIMEOUT)
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+        });
     }
 }
 
@@ -749,6 +778,11 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 
+/// Largest form we accept.
+const BODY_MAX: usize = 16 * 1024;
+/// How long a client gets to send its request headers.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+
 struct App {
     store: Mutex<Store>,
     public_url: Option<String>,
@@ -756,34 +790,116 @@ struct App {
 }
 
 type Shared = Arc<App>;
+type Res = Response<Full<Bytes>>;
 
 fn lock(app: &App) -> MutexGuard<'_, Store> {
     app.store.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn router(app: Shared) -> Router {
-    Router::new()
-        .route("/", get(index))
-        .route("/groups", post(create))
-        .route("/g/{t}", get(admin))
-        .route("/g/{t}/rules", post(add_rule))
-        .route("/g/{t}/rules/{i}/delete", post(remove_rule))
-        .route("/g/{t}/people/{id}/delete", post(remove_person))
-        .route("/g/{t}/draw", post(draw_names))
-        .route("/g/{t}/undraw", post(undraw))
-        .route("/j/{t}", get(join).post(join_post))
-        .route("/p/{t}", get(me))
-        .route("/p/{t}/wishes", post(save_wishes))
-        .route("/p/{t}/open", post(unwrap_tag))
-        .route("/p/{t}/state", get(draw_state))
-        .route("/static/{file}", get(asset))
-        .fallback(fallback)
-        .layer(DefaultBodyLimit::max(16 * 1024))
-        .layer(middleware::map_response(security_headers))
-        .with_state(app)
+/// Route a request. Paths are split on `/`; a known path with the wrong method
+/// gets 405, anything else 404. Every response gets the security headers.
+async fn handle<B>(app: &App, req: Request<B>) -> Res
+where
+    B: hyper::body::Body<Data = Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let (parts, body) = req.into_parts();
+    let (get, post) = (parts.method == Method::GET, parts.method == Method::POST);
+    let (h, query) = (&parts.headers, parts.uri.query().unwrap_or(""));
+    let segs: Vec<&str> = parts.uri.path().split('/').skip(1).collect();
+    let mut res = match segs.as_slice() {
+        [""] if get => index(),
+        ["groups"] if post => match read_form(body).await {
+            Some(f) => create(app, &f),
+            None => too_large(),
+        },
+        ["g", t] if get => admin(app, t, query, h),
+        ["g", t, "rules"] if post => match read_form(body).await {
+            Some(f) => add_rule(app, t, &f),
+            None => too_large(),
+        },
+        ["g", t, "rules", i, "delete"] if post => match i.parse() {
+            Ok(i) => remove_rule(app, t, i),
+            Err(_) => not_found(),
+        },
+        ["g", t, "people", id, "delete"] if post => match id.parse() {
+            Ok(id) => remove_person(app, t, id),
+            Err(_) => not_found(),
+        },
+        ["g", t, "draw"] if post => draw_names(app, t),
+        ["g", t, "undraw"] if post => undraw(app, t),
+        ["j", t] if get => join(app, t, h),
+        ["j", t] if post => match read_form(body).await {
+            Some(f) => join_post(app, t, &f),
+            None => too_large(),
+        },
+        ["p", t] if get => me(app, t, query, h),
+        ["p", t, "wishes"] if post => match read_form(body).await {
+            Some(f) => save_wishes(app, t, &f),
+            None => too_large(),
+        },
+        ["p", t, "open"] if post => unwrap_tag(app, t),
+        ["p", t, "state"] if get => draw_state(app, t),
+        ["static", file] if get => asset(file),
+        known if is_route(known) => status(StatusCode::METHOD_NOT_ALLOWED),
+        _ => not_found(),
+    };
+    security_headers(&mut res);
+    res
 }
 
-async fn security_headers(mut res: Response) -> Response {
+fn is_route(segs: &[&str]) -> bool {
+    matches!(
+        segs,
+        [""] | ["groups"]
+            | ["g", _]
+            | ["g", _, "rules" | "draw" | "undraw"]
+            | ["g", _, "rules" | "people", _, "delete"]
+            | ["j", _]
+            | ["p", _]
+            | ["p", _, "wishes" | "open" | "state"]
+            | ["static", _]
+    )
+}
+
+/// A submitted form: name/value pairs, first value wins.
+struct Form(Vec<(String, String)>);
+
+impl Form {
+    fn get(&self, key: &str) -> String {
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    }
+
+    fn has(&self, key: &str) -> bool {
+        self.0.iter().any(|(k, _)| k == key)
+    }
+}
+
+/// Read an urlencoded form body, or `None` if it's over `BODY_MAX`.
+async fn read_form<B>(body: B) -> Option<Form>
+where
+    B: hyper::body::Body<Data = Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let bytes = Limited::new(body, BODY_MAX)
+        .collect()
+        .await
+        .ok()?
+        .to_bytes();
+    Some(Form(form_urlencoded::parse(&bytes).into_owned().collect()))
+}
+
+fn query_param(query: &str, key: &str) -> Option<String> {
+    form_urlencoded::parse(query.as_bytes())
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+}
+
+fn security_headers(res: &mut Res) {
     let h = res.headers_mut();
     let mut set = |k: header::HeaderName, v: &'static str| {
         h.entry(k).or_insert(HeaderValue::from_static(v));
@@ -798,7 +914,6 @@ async fn security_headers(mut res: Response) -> Response {
     set(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
     set(header::X_FRAME_OPTIONS, "DENY");
     set(header::CACHE_CONTROL, "no-store");
-    res
 }
 
 /// Base for links we hand out: the configured public URL, else whatever
@@ -823,15 +938,46 @@ fn base_url(app: &App, headers: &HeaderMap) -> String {
     format!("{proto}://{host}")
 }
 
-fn page(markup: Markup) -> Response {
-    Html(markup.into_string()).into_response()
+fn respond(code: StatusCode, content_type: &'static str, body: impl Into<Bytes>) -> Res {
+    let mut res = Response::new(Full::new(body.into()));
+    *res.status_mut() = code;
+    res.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    res
 }
 
-fn to(path: String) -> Response {
-    Redirect::to(&path).into_response()
+fn status(code: StatusCode) -> Res {
+    let mut res = Response::new(Full::new(Bytes::new()));
+    *res.status_mut() = code;
+    res
 }
 
-fn not_found() -> Response {
+fn page(markup: Markup) -> Res {
+    respond(
+        StatusCode::OK,
+        "text/html; charset=utf-8",
+        markup.into_string(),
+    )
+}
+
+/// 303 See Other: after a form post, the browser GETs `path`.
+fn to(path: String) -> Res {
+    let mut res = status(StatusCode::SEE_OTHER);
+    if let Ok(v) = HeaderValue::try_from(path) {
+        res.headers_mut().insert(header::LOCATION, v);
+    }
+    res
+}
+
+fn too_large() -> Res {
+    respond(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "text/plain; charset=utf-8",
+        "That form is too big.",
+    )
+}
+
+fn not_found() -> Res {
     let body = layout(
         "Link not found · Kringle",
         html! {},
@@ -843,10 +989,14 @@ fn not_found() -> Response {
             }
         },
     );
-    (StatusCode::NOT_FOUND, Html(body.into_string())).into_response()
+    respond(
+        StatusCode::NOT_FOUND,
+        "text/html; charset=utf-8",
+        body.into_string(),
+    )
 }
 
-fn save_failed(e: io::Error) -> Response {
+fn save_failed(e: io::Error) -> Res {
     eprintln!("kringle: saving failed: {e}");
     let body = layout(
         "Couldn’t save · Kringle",
@@ -858,60 +1008,78 @@ fn save_failed(e: io::Error) -> Response {
             }
         },
     );
-    (StatusCode::INTERNAL_SERVER_ERROR, Html(body.into_string())).into_response()
+    respond(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "text/html; charset=utf-8",
+        body.into_string(),
+    )
 }
 
-async fn fallback() -> Response {
-    not_found()
-}
+/// The two SVG illustrations are embedded pre-gzipped (static/*.svg.gz, made
+/// with `gzip -9nk`), which saves ~24 KB of binary and makes pages load faster.
+/// Every browser accepts gzip, so they are always sent that way.
+const TOWN_SVG_GZ: &[u8] = include_bytes!("../static/town.svg.gz");
+const CLOUDS_SVG_GZ: &[u8] = include_bytes!("../static/clouds.svg.gz");
 
-async fn asset(Path(file): Path<String>) -> Response {
-    let (kind, body): (&str, &'static [u8]) = match file.as_str() {
-        "style.css" => ("text/css; charset=utf-8", CSS.as_bytes()),
-        "app.js" => ("text/javascript; charset=utf-8", JS.as_bytes()),
-        "town.svg" => ("image/svg+xml", include_bytes!("../static/town.svg")),
-        "clouds.svg" => ("image/svg+xml", include_bytes!("../static/clouds.svg")),
-        "fell.woff2" => ("font/woff2", include_bytes!("../static/fonts/fell.woff2")),
+fn asset(file: &str) -> Res {
+    let (kind, gzipped, body): (&'static str, bool, &'static [u8]) = match file {
+        "style.css" => ("text/css; charset=utf-8", false, CSS.as_bytes()),
+        "app.js" => ("text/javascript; charset=utf-8", false, JS.as_bytes()),
+        "town.svg" => ("image/svg+xml", true, TOWN_SVG_GZ),
+        "clouds.svg" => ("image/svg+xml", true, CLOUDS_SVG_GZ),
+        "fell.woff2" => (
+            "font/woff2",
+            false,
+            include_bytes!("../static/fonts/fell.woff2"),
+        ),
         "fell-italic.woff2" => (
             "font/woff2",
+            false,
             include_bytes!("../static/fonts/fell-italic.woff2"),
         ),
         _ => return not_found(),
     };
-    (
-        [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "public, max-age=86400"),
-        ],
-        body,
-    )
-        .into_response()
+    let mut res = respond(StatusCode::OK, kind, Bytes::from_static(body));
+    let h = res.headers_mut();
+    h.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400"),
+    );
+    if gzipped {
+        h.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    }
+    res
 }
 
 // ---------------------------------------------------------------------------
 // Handlers: start a group
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
+#[derive(Default)]
 struct CreateForm {
     group: String,
     host: String,
     budget: String,
-    plays: Option<String>,
+    plays: bool,
 }
 
-async fn index() -> Response {
+fn index() -> Res {
     page(create_page(
         &CreateForm {
-            plays: Some("1".into()),
+            plays: true,
             ..Default::default()
         },
         None,
     ))
 }
 
-async fn create(State(app): State<Shared>, Form(f): Form<CreateForm>) -> Response {
+fn create(app: &App, form: &Form) -> Res {
+    let f = CreateForm {
+        group: form.get("group"),
+        host: form.get("host"),
+        budget: form.get("budget"),
+        plays: form.has("plays"),
+    };
     let name = clean_line(&f.group, GROUP_MAX);
     let host = clean_line(&f.host, NAME_MAX);
     let budget: String = f
@@ -930,7 +1098,7 @@ async fn create(State(app): State<Shared>, Form(f): Form<CreateForm>) -> Respons
     if let Some(e) = error {
         return page(create_page(&f, Some(e)));
     }
-    let mut st = lock(&app);
+    let mut st = lock(app);
     st.prune(now(), app.keep_secs);
     if st.data.groups.len() >= GROUPS_MAX {
         return page(create_page(
@@ -950,7 +1118,7 @@ async fn create(State(app): State<Shared>, Form(f): Form<CreateForm>) -> Respons
         members: Vec::new(),
         rules: Vec::new(),
     };
-    if f.plays.is_some() {
+    if f.plays {
         g.members.push(Member {
             id: 1,
             name: host,
@@ -975,24 +1143,13 @@ async fn create(State(app): State<Shared>, Form(f): Form<CreateForm>) -> Respons
 // Handlers: host dashboard
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct AdminQuery {
-    err: Option<String>,
-}
-
-async fn admin(
-    State(app): State<Shared>,
-    Path(t): Path<String>,
-    Query(q): Query<AdminQuery>,
-    headers: HeaderMap,
-) -> Response {
-    let base = base_url(&app, &headers);
-    let mut st = lock(&app);
-    let Some(g) = st.by_admin(&t) else {
+fn admin(app: &App, t: &str, query: &str, headers: &HeaderMap) -> Res {
+    let base = base_url(app, headers);
+    let mut st = lock(app);
+    let Some(g) = st.by_admin(t) else {
         return not_found();
     };
-    let error = match q.err.as_deref() {
+    let error = match query_param(query, "err").as_deref() {
         Some("same") => Some("Pick two different people."),
         Some("dup") => Some("That rule already exists."),
         Some("draw") => Some("Names couldn’t be drawn. Check the rules below."),
@@ -1010,7 +1167,7 @@ fn admin_change(
     t: &str,
     anchor: &str,
     f: impl FnOnce(&mut Group) -> Option<&'static str>,
-) -> Response {
+) -> Res {
     let mut st = lock(app);
     let Some(g) = st.by_admin(t) else {
         return not_found();
@@ -1028,30 +1185,21 @@ fn admin_change(
     to(format!("/g/{t}#{anchor}"))
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct RuleForm {
-    giver: String,
-    receiver: String,
-    both: Option<String>,
-}
-
-async fn add_rule(
-    State(app): State<Shared>,
-    Path(t): Path<String>,
-    Form(f): Form<RuleForm>,
-) -> Response {
-    admin_change(&app, &t, "rules", |g| {
+fn add_rule(app: &App, t: &str, f: &Form) -> Res {
+    admin_change(app, t, "rules", |g| {
         if g.drawn.is_some() {
             return Some("drawn");
         }
-        let (Ok(giver), Ok(receiver)) = (f.giver.parse::<u32>(), f.receiver.parse::<u32>()) else {
+        let (Ok(giver), Ok(receiver)) = (
+            f.get("giver").parse::<u32>(),
+            f.get("receiver").parse::<u32>(),
+        ) else {
             return Some("same");
         };
         if giver == receiver || g.index_of(giver).is_none() || g.index_of(receiver).is_none() {
             return Some("same");
         }
-        let both = f.both.is_some();
+        let both = f.has("both");
         let dup = g.rules.iter().any(|r| {
             (r.giver == giver && r.receiver == receiver)
                 || (r.both && r.giver == receiver && r.receiver == giver)
@@ -1069,8 +1217,8 @@ async fn add_rule(
     })
 }
 
-async fn remove_rule(State(app): State<Shared>, Path((t, i)): Path<(String, usize)>) -> Response {
-    admin_change(&app, &t, "rules", |g| {
+fn remove_rule(app: &App, t: &str, i: usize) -> Res {
+    admin_change(app, t, "rules", |g| {
         if g.drawn.is_some() {
             return Some("drawn");
         }
@@ -1081,8 +1229,8 @@ async fn remove_rule(State(app): State<Shared>, Path((t, i)): Path<(String, usiz
     })
 }
 
-async fn remove_person(State(app): State<Shared>, Path((t, id)): Path<(String, u32)>) -> Response {
-    admin_change(&app, &t, "people", |g| {
+fn remove_person(app: &App, t: &str, id: u32) -> Res {
+    admin_change(app, t, "people", |g| {
         if g.drawn.is_some() {
             return Some("drawn");
         }
@@ -1095,8 +1243,8 @@ async fn remove_person(State(app): State<Shared>, Path((t, id)): Path<(String, u
     })
 }
 
-async fn draw_names(State(app): State<Shared>, Path(t): Path<String>) -> Response {
-    admin_change(&app, &t, "draw", |g| {
+fn draw_names(app: &App, t: &str) -> Res {
+    admin_change(app, t, "draw", |g| {
         if g.drawn.is_some() {
             return Some("drawn");
         }
@@ -1116,8 +1264,8 @@ async fn draw_names(State(app): State<Shared>, Path(t): Path<String>) -> Respons
     })
 }
 
-async fn undraw(State(app): State<Shared>, Path(t): Path<String>) -> Response {
-    admin_change(&app, &t, "top", |g| {
+fn undraw(app: &App, t: &str) -> Res {
+    admin_change(app, t, "top", |g| {
         g.drawn = None;
         for m in &mut g.members {
             m.gives_to = None;
@@ -1131,30 +1279,29 @@ async fn undraw(State(app): State<Shared>, Path(t): Path<String>) -> Response {
 // Handlers: joining
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
+#[derive(Default)]
 struct JoinForm {
     name: String,
     wishes: String,
 }
 
-async fn join(State(app): State<Shared>, Path(t): Path<String>, headers: HeaderMap) -> Response {
-    let mut st = lock(&app);
-    let Some(g) = st.by_invite(&t) else {
+fn join(app: &App, t: &str, headers: &HeaderMap) -> Res {
+    let mut st = lock(app);
+    let Some(g) = st.by_invite(t) else {
         return not_found();
     };
     let returning =
-        cookie(&headers, "kringle").and_then(|c| g.members.iter().find(|m| m.token == c));
+        cookie(headers, "kringle").and_then(|c| g.members.iter().find(|m| m.token == c));
     page(join_page(g, returning, &JoinForm::default(), None))
 }
 
-async fn join_post(
-    State(app): State<Shared>,
-    Path(t): Path<String>,
-    Form(f): Form<JoinForm>,
-) -> Response {
-    let mut st = lock(&app);
-    let Some(g) = st.by_invite(&t) else {
+fn join_post(app: &App, t: &str, form: &Form) -> Res {
+    let f = JoinForm {
+        name: form.get("name"),
+        wishes: form.get("wishes"),
+    };
+    let mut st = lock(app);
+    let Some(g) = st.by_invite(t) else {
         return not_found();
     };
     let name = clean_line(&f.name, NAME_MAX);
@@ -1191,84 +1338,65 @@ async fn join_post(
     });
     g.next_id += 1;
     if let Err(e) = st.save() {
-        if let Some(g) = st.by_invite(&t) {
+        if let Some(g) = st.by_invite(t) {
             g.members.pop();
         }
         return save_failed(e);
     }
     // Lets them get back in by reopening the invite link on the same phone.
-    let set_cookie =
-        format!("kringle={token}; Path=/j/{t}; Max-Age=15552000; HttpOnly; SameSite=Lax");
-    (
-        [(header::SET_COOKIE, set_cookie)],
-        Redirect::to(&format!("/p/{token}")),
-    )
-        .into_response()
+    let mut res = to(format!("/p/{token}"));
+    let cookie = format!("kringle={token}; Path=/j/{t}; Max-Age=15552000; HttpOnly; SameSite=Lax");
+    if let Ok(v) = HeaderValue::try_from(cookie) {
+        res.headers_mut().insert(header::SET_COOKIE, v);
+    }
+    res
 }
 
 // ---------------------------------------------------------------------------
 // Handlers: personal page and gift tag
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct MeQuery {
-    show: Option<String>,
-}
-
-async fn me(
-    State(app): State<Shared>,
-    Path(t): Path<String>,
-    Query(q): Query<MeQuery>,
-    headers: HeaderMap,
-) -> Response {
-    let base = base_url(&app, &headers);
-    let mut st = lock(&app);
-    let Some((g, i)) = st.by_personal(&t) else {
+fn me(app: &App, t: &str, query: &str, headers: &HeaderMap) -> Res {
+    let base = base_url(app, headers);
+    let mut st = lock(app);
+    let Some((g, i)) = st.by_personal(t) else {
         return not_found();
     };
     let m = &g.members[i];
     if g.drawn.is_some()
         && let Some(to) = m.gives_to.and_then(|id| g.member(id))
     {
-        return page(tag_page(g, m, to, q.show.is_some() && m.opened));
+        let show = query_param(query, "show").is_some();
+        return page(tag_page(g, m, to, show && m.opened));
     }
     page(waiting_page(g, m, &base))
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct WishForm {
-    wishes: String,
-    back: String,
-}
-
-async fn save_wishes(
-    State(app): State<Shared>,
-    Path(t): Path<String>,
-    Form(f): Form<WishForm>,
-) -> Response {
-    let mut st = lock(&app);
-    let Some((g, i)) = st.by_personal(&t) else {
+fn save_wishes(app: &App, t: &str, f: &Form) -> Res {
+    let mut st = lock(app);
+    let Some((g, i)) = st.by_personal(t) else {
         return not_found();
     };
-    let before = std::mem::replace(&mut g.members[i].wishes, clean_text(&f.wishes, WISHES_MAX));
+    let before = std::mem::replace(
+        &mut g.members[i].wishes,
+        clean_text(&f.get("wishes"), WISHES_MAX),
+    );
     if let Err(e) = st.save() {
-        if let Some((g, i)) = st.by_personal(&t) {
+        if let Some((g, i)) = st.by_personal(t) {
             g.members[i].wishes = before;
         }
         return save_failed(e);
     }
-    to(if f.back == "tag" {
+    to(if f.get("back") == "tag" {
         format!("/p/{t}?show=1#tag")
     } else {
         format!("/p/{t}#wishes")
     })
 }
 
-async fn unwrap_tag(State(app): State<Shared>, Path(t): Path<String>) -> Response {
-    let mut st = lock(&app);
-    let Some((g, i)) = st.by_personal(&t) else {
+fn unwrap_tag(app: &App, t: &str) -> Res {
+    let mut st = lock(app);
+    let Some((g, i)) = st.by_personal(t) else {
         return not_found();
     };
     if g.drawn.is_none() {
@@ -1284,12 +1412,12 @@ async fn unwrap_tag(State(app): State<Shared>, Path(t): Path<String>) -> Respons
 }
 
 /// Polled by the waiting page: 200 once names are drawn, else 204.
-async fn draw_state(State(app): State<Shared>, Path(t): Path<String>) -> Response {
-    let mut st = lock(&app);
-    match st.by_personal(&t) {
-        Some((g, _)) if g.drawn.is_some() => StatusCode::OK.into_response(),
-        Some(_) => StatusCode::NO_CONTENT.into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+fn draw_state(app: &App, t: &str) -> Res {
+    let mut st = lock(app);
+    match st.by_personal(t) {
+        Some((g, _)) if g.drawn.is_some() => status(StatusCode::OK),
+        Some(_) => status(StatusCode::NO_CONTENT),
+        None => status(StatusCode::NOT_FOUND),
     }
 }
 
@@ -1359,7 +1487,7 @@ fn create_page(f: &CreateForm, error: Option<&str>) -> Markup {
                     span.hint { "Optional." }
                 }
                 label.check {
-                    input type="checkbox" name="plays" value="1" checked[f.plays.is_some()];
+                    input type="checkbox" name="plays" value="1" checked[f.plays];
                     "I’m in the draw too"
                 }
                 button.btn.primary.big type="submit" { (icon(GIFT_ICON)) "Create group" }
@@ -2092,41 +2220,43 @@ const JS: &str = r##""use strict";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-    use http_body_util::BodyExt as _;
-    use tower::ServiceExt as _;
 
-    fn test_app() -> (Router, PathBuf) {
+    fn test_app() -> (Shared, PathBuf) {
         let path = std::env::temp_dir().join(format!("kringle-test-{}.json", token()));
         let app = Arc::new(App {
             store: Mutex::new(Store::load(path.clone()).unwrap()),
             public_url: Some("http://kringle.test".into()),
             keep_secs: 86_400,
         });
-        (router(app), path)
+        (app, path)
     }
 
-    struct Res {
+    /// A response, flattened for easy assertions.
+    struct Reply {
         status: StatusCode,
         location: Option<String>,
         set_cookie: Option<String>,
         content_type: String,
-        body: String,
+        encoding: Option<String>,
+        body: Bytes,
     }
 
-    impl Res {
+    impl Reply {
         /// Where a redirect goes, without the #fragment (not part of a request).
         fn to(&self) -> String {
             let loc = self.location.as_deref().expect("a redirect");
             loc.split('#').next().unwrap().to_string()
         }
         fn has(&self, text: &str) -> bool {
-            self.body.contains(text)
+            String::from_utf8_lossy(&self.body).contains(text)
+        }
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.body).into_owned()
         }
     }
 
-    async fn req(r: &Router, method: &str, uri: &str, form: &str, cookie: Option<&str>) -> Res {
+    /// Send a request through the same routing the server uses.
+    async fn req(app: &Shared, method: &str, uri: &str, form: &str, cookie: Option<&str>) -> Reply {
         let mut b = Request::builder().method(method).uri(uri);
         if method == "POST" {
             b = b.header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
@@ -2134,34 +2264,31 @@ mod tests {
         if let Some(c) = cookie {
             b = b.header(header::COOKIE, c);
         }
-        let res = r
-            .clone()
-            .oneshot(b.body(Body::from(form.to_string())).unwrap())
-            .await
-            .unwrap();
+        let res = handle(
+            app,
+            b.body(Full::new(Bytes::from(form.to_string()))).unwrap(),
+        )
+        .await;
         let header = |k| {
             res.headers()
                 .get(k)
                 .map(|v: &HeaderValue| v.to_str().unwrap().to_string())
         };
-        let (location, set_cookie) = (header(header::LOCATION), header(header::SET_COOKIE));
-        let content_type = header(header::CONTENT_TYPE).unwrap_or_default();
-        let status = res.status();
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        Res {
-            status,
-            location,
-            set_cookie,
-            content_type,
-            body: String::from_utf8_lossy(&bytes).into_owned(),
+        Reply {
+            status: res.status(),
+            location: header(header::LOCATION),
+            set_cookie: header(header::SET_COOKIE),
+            content_type: header(header::CONTENT_TYPE).unwrap_or_default(),
+            encoding: header(header::CONTENT_ENCODING),
+            body: res.into_body().collect().await.unwrap().to_bytes(),
         }
     }
 
-    async fn get(r: &Router, uri: &str) -> Res {
+    async fn get(r: &Shared, uri: &str) -> Reply {
         req(r, "GET", uri, "", None).await
     }
 
-    async fn post(r: &Router, uri: &str, form: &str) -> Res {
+    async fn post(r: &Shared, uri: &str, form: &str) -> Reply {
         req(r, "POST", uri, form, None).await
     }
 
@@ -2171,20 +2298,20 @@ mod tests {
     }
 
     /// Start a group and return (admin path, invite path).
-    async fn start(r: &Router, form: &str) -> (String, String) {
+    async fn start(r: &Shared, form: &str) -> (String, String) {
         let admin = post(r, "/groups", form).await.to();
-        let page = get(r, &admin).await;
-        let invite = format!("/j/{}", between(&page.body, "http://kringle.test/j/", "\""));
+        let page = get(r, &admin).await.text();
+        let invite = format!("/j/{}", between(&page, "http://kringle.test/j/", "\""));
         (admin, invite)
     }
 
-    async fn join(r: &Router, invite: &str, form: &str) -> String {
+    async fn join(r: &Shared, invite: &str, form: &str) -> String {
         let res = post(r, invite, form).await;
         assert_eq!(
             res.status,
             StatusCode::SEE_OTHER,
             "join {form}: {}",
-            res.body
+            res.text()
         );
         res.to()
     }
@@ -2436,8 +2563,9 @@ mod tests {
                 res.has("Show all wishes") && res.has("wish-body"),
                 "long wishes collapse"
             );
+            let text = res.text();
             let full = between(
-                &res.body,
+                &text,
                 "<summary class=\"link\">Show all wishes</summary><p class=\"wish-body\">",
                 "</p>",
             );
@@ -2473,6 +2601,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn svgs_are_served_gzipped_and_match_their_sources() {
+        use std::io::Read as _;
+        let (r, path) = test_app();
+        for (file, source) in [
+            ("town.svg", &include_bytes!("../static/town.svg")[..]),
+            ("clouds.svg", &include_bytes!("../static/clouds.svg")[..]),
+        ] {
+            let res = get(&r, &format!("/static/{file}")).await;
+            assert_eq!(res.encoding.as_deref(), Some("gzip"), "{file}");
+            let mut plain = Vec::new();
+            flate2::read::GzDecoder::new(&res.body[..])
+                .read_to_end(&mut plain)
+                .unwrap();
+            assert_eq!(
+                plain, source,
+                "static/{file}.gz is stale: run gzip -9nkf static/{file}"
+            );
+        }
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn unknown_links_are_404() {
         let (r, path) = test_app();
         for uri in [
@@ -2493,6 +2643,18 @@ mod tests {
             post(&r, "/p/nope/open", "").await.status,
             StatusCode::NOT_FOUND
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn oversized_forms_are_refused() {
+        let (r, path) = test_app();
+        let big = format!("group={}&host=Rosa", "x".repeat(BODY_MAX));
+        assert_eq!(
+            post(&r, "/groups", &big).await.status,
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert!(lock(&r).data.groups.is_empty(), "nothing was created");
         let _ = fs::remove_file(path);
     }
 

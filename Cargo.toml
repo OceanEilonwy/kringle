@@ -1,25 +1,31 @@
 [package]
 name = "kringle"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "A tiny Kris Kringle / Secret Santa gift swap server, small enough for a home router."
 
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "form", "query"] }
+form_urlencoded = "1"
 getrandom = "0.4"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 maud = "0.27"
 qrcodegen = "1.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "net", "macros", "signal"] }
+tokio = { version = "1", features = ["rt", "net", "macros", "signal", "time"] }
 
 [dev-dependencies]
-http-body-util = "0.1"
-tower = { version = "0.5", features = ["util"] }
+flate2 = "1"
 
+# Small over fast: family-scale traffic never notices. A panic aborts; on the
+# router procd restarts the service. scripts/build-openwrt.sh goes further on
+# nightly (std rebuilt with panic = immediate-abort).
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"

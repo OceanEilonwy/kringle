@@ -47,7 +47,15 @@ else
 	echo "warning: no signing key, so the repository index is signed with a throwaway key" >&2
 fi
 
-cargo build --release --locked --target aarch64-unknown-linux-musl
+# The router binary is built on nightly with the standard library rebuilt
+# without panic messages, Debug formatting or unwind tables: about 0.6 MB
+# instead of 1.1 MB. Tests and development use stable; set NIGHTLY to pick a
+# specific nightly.
+NIGHTLY="${NIGHTLY:-nightly}"
+rustup toolchain install "$NIGHTLY" --profile minimal --component rust-src --target aarch64-unknown-linux-musl
+RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none -Cforce-unwind-tables=no" \
+	cargo "+$NIGHTLY" build --release --locked --target aarch64-unknown-linux-musl \
+	-Z build-std=std,panic_abort
 install -m 0755 target/aarch64-unknown-linux-musl/release/kringle openwrt/kringle/files/kringle
 
 rm -rf dist site

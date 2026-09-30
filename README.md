@@ -13,15 +13,15 @@ their personal page.
 - **Secret by design.** The host sees who has opened their tag, never who got
   who. The draw is blocked if the rules would give a pair away, and the host
   is warned if the group is so small they could work it out from their own tag.
-- **Small.** It's a static binary of about 1.3 MB with no runtime
-  dependencies. The templates, CSS, fonts and artwork are compiled in. All
+- **Small and light.** It's a static binary of about 0.5 MB with no runtime
+  dependencies. It's fully async, so an idle router stays idle. The templates, CSS, fonts and artwork are compiled in. All
   state lives in one JSON file, rewritten atomically after each change.
 - **Works without JavaScript.** Every action is a plain form. A few lines of
   JS add copy buttons, confirmations and live refresh.
 - **Router-native.** It ships as OpenWrt packages with a LuCI page
   (Services → Kringle) for the port, public address and other settings.
 
-The code is Rust ([axum](https://github.com/tokio-rs/axum) with
+The code is Rust ([hyper](https://hyper.rs) HTTP/1.1 on tokio, with
 [maud](https://maud.lambda.xyz) templates), all in `src/main.rs`. The design
 canvas it was built from is in `design/`.
 
@@ -115,16 +115,19 @@ the tests, builds both packages and uploads them as a build artifact
 Pushes to `main` also deploy the signed repository to GitHub Pages.
 
 The build is `scripts/build-openwrt.sh`, which you can also run locally
-(needs Rust and Docker):
+(needs rustup and Docker):
 
 ```sh
-rustup target add aarch64-unknown-linux-musl   # once
 scripts/build-openwrt.sh                        # -> dist/*.apk and site/
 ```
 
-1. It cross-compiles the binary with cargo. Everything in the dependency tree
-   is pure Rust, so rust-lld and the musl files in the rustup target are
-   enough (see `.cargo/config.toml`).
+1. It cross-compiles the binary with cargo on the latest nightly. It installs
+   that toolchain itself; set `NIGHTLY=nightly-YYYY-MM-DD` to pick one. The
+   standard library is rebuilt without panic messages, Debug formatting or
+   unwind tables (`-Zbuild-std`, `panic = immediate-abort`), which roughly
+   halves the binary to about 0.5 MB. Tests and everyday development use
+   stable. Everything in the dependency tree is pure Rust, so rust-lld and
+   the musl files in the rustup target are enough (see `.cargo/config.toml`).
 2. The official OpenWrt SDK (`openwrt/sdk:mediatek-filogic-25.12.5`, in
    Docker) packages it with the LuCI app.
 3. The SDK writes a `packages.adb` index, signed with the repository key.
@@ -186,6 +189,10 @@ router shouldn't be the one who peeks.
 cargo run -- --addr 127.0.0.1:8787   # http://127.0.0.1:8787
 cargo test                           # every page and action, plus the draw logic
 ```
+
+`static/town.svg` and `static/clouds.svg` are served from pre-gzipped
+copies. After editing one, run `gzip -9nkf static/town.svg` (or
+`clouds.svg`). A test fails if a `.gz` file is out of date.
 
 Fonts: IM Fell English, by Igino Marini, under the SIL Open Font License
 (`static/fonts/OFL.txt`).
