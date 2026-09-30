@@ -24,7 +24,7 @@ a{color:var(--red-text)}
 :focus-visible{outline:2px dotted var(--gold);outline-offset:3px}
 h1,h2,h3{font-family:var(--display);font-weight:400;margin:0;line-height:1.1}
 p{margin:0}
-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;overflow-wrap:anywhere}
 
 .sky{position:absolute;inset:0 0 auto;height:720px;overflow:hidden;pointer-events:none}
 .sun{position:absolute;left:calc(50% + 180px);top:30px;width:170px;height:170px;border-radius:50%;
@@ -83,6 +83,18 @@ pre{margin:0;padding:14px 16px;padding-right:86px;overflow-x:auto;background:#24
 .req{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 .req span{padding:5px 12px;border-radius:999px;background:var(--stone2);border:1px solid var(--line);font-size:14px;font-weight:700}
 .files{margin:8px 0 0;padding-left:20px}
+.small{font-size:14px}
+.path{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;align-self:flex-start;padding:4px 12px;border-radius:8px;background:var(--stone2);border:1px solid var(--line);font-weight:700;font-size:15px}
+.path.inline{display:inline;padding:1px 8px}
+.path b{color:var(--red-text)}
+.path em{font-style:normal;text-decoration:underline;text-underline-offset:3px}
+.tabs{display:flex;gap:6px;margin:-4px 0 22px;border-bottom:3px groove var(--edge)}
+.tabs[hidden]{display:none}
+.tabs [role=tab]{position:relative;top:3px;min-height:48px;padding:0 20px;border:3px outset #CDB68C;border-bottom:0;border-radius:10px 10px 0 0;background:var(--stone2);color:var(--muted);font:700 16px var(--body);cursor:pointer}
+.tabs [role=tab][aria-selected=true]{background:var(--stone) var(--fall);color:var(--ink);border-color:var(--edge);border-bottom:3px solid var(--stone)}
+.tabpanel+.tabpanel{margin-top:28px}
+.js .tabpanel+.tabpanel{margin-top:0}
+.js .nojs{display:none}
 footer{position:relative;z-index:1;text-align:center;color:var(--sky-muted);font-size:14px;font-weight:700}
 footer .panel{display:inline-block;padding:12px 20px;font-weight:400;color:var(--ink)}
 
@@ -92,6 +104,11 @@ footer .panel{display:inline-block;padding:12px 20px;font-weight:400;color:var(-
   main{gap:40px;padding-top:32px}
   .panel{padding:20px}
   .sun{left:auto;right:-40px}
+}
+@media (max-width:560px){
+  pre{padding:46px 14px 14px}
+  .install ol>li{gap:10px}
+  .tabs [role=tab]{padding:0 12px;font-size:15px}
 }
 </style>
 </head>
@@ -162,60 +179,107 @@ footer .panel{display:inline-block;padding:12px 20px;font-weight:400;color:var(-
   <section id="install" class="install">
     <div class="section-title">
       <h2>Install on your Flint 2</h2>
-      <p>About five minutes, from a computer on your home network.</p>
+      <p>About five minutes. You can do it all from the router’s web interface.</p>
     </div>
 
     <div class="panel">
       <h3>You’ll need</h3>
       <div class="req">
         <span>GL.iNet Flint 2 (GL-MT6000)</span>
-        <span>OpenWrt 25.12</span>
-        <span>SSH access as root</span>
+        <span>OpenWrt 25.12 with LuCI</span>
+        <span>The router’s root password</span>
       </div>
       <p class="muted" style="margin-top:12px">This is for stock OpenWrt, not GL.iNet’s own firmware. Other OpenWrt 25.12 routers with an <code>aarch64_cortex-a53</code> CPU (MediaTek Filogic and similar) work the same way.</p>
     </div>
 
     <div class="panel">
-      <ol>
-        <li><span class="num">1</span><div>
-          <h3>Connect to the router</h3>
-          <p>Open a terminal and log in. Stock OpenWrt is at <code>192.168.1.1</code> unless you changed it.</p>
-          <div class="cmd"><pre>ssh root@192.168.1.1</pre></div>
-        </div></li>
-        <li><span class="num">2</span><div>
-          <h3>Add the Kringle package repository</h3>
-          <p>This trusts the key the packages are signed with, then tells the package manager where to find them. You only do this once.</p>
-          <div class="cmd"><pre>wget -O /etc/apk/keys/kringle.pem @PAGES_URL@/kringle.pem
+      <div class="tabs" role="tablist" aria-label="How to install" hidden>
+        <button type="button" role="tab" id="tab-web" aria-controls="panel-web" aria-selected="true">Web (LuCI)</button>
+        <button type="button" role="tab" id="tab-ssh" aria-controls="panel-ssh" aria-selected="false" tabindex="-1">Terminal (SSH)</button>
+      </div>
+
+      <div class="tabpanel" id="panel-web" role="tabpanel" aria-labelledby="tab-web">
+        <h3 class="nojs">In the web interface (LuCI)</h3>
+        <ol>
+          <li><span class="num">1</span><div>
+            <h3>Log in to LuCI</h3>
+            <p>Open <a href="http://192.168.1.1/" target="_blank" rel="noreferrer"><code>http://192.168.1.1</code></a> (your router’s address, if you changed it) and log in as <strong>root</strong>.</p>
+          </div></li>
+          <li><span class="num">2</span><div>
+            <h3>Trust Kringle’s signing key</h3>
+            <p class="path">System <b>›</b> Administration <b>›</b> <em>Repo Public Keys</em> tab</p>
+            <p>Copy the key below into the box that says <em>“Paste content of a file, or a URL to a key file…”</em>, then click <strong>Add key</strong>.</p>
+            <div class="cmd"><pre>@PUBKEY@</pre></div>
+            <p class="muted small">Or paste this address instead of the key: <code>@PAGES_URL@/kringle.pem</code></p>
+          </div></li>
+          <li><span class="num">3</span><div>
+            <h3>Add the Kringle repository</h3>
+            <p class="path">System <b>›</b> Software <b>›</b> <em>Configure apk</em> button</p>
+            <p>Find the box for <code>/etc/apk/repositories.d/customfeeds.list</code>. Add this line at the end, on a line of its own, then click <strong>Save</strong>.</p>
+            <div class="cmd"><pre>@PAGES_URL@/@REPO_PATH@/packages.adb</pre></div>
+          </div></li>
+          <li><span class="num">4</span><div>
+            <h3>Install Kringle</h3>
+            <p class="path">System <b>›</b> Software</p>
+            <p>Click <strong>Update lists…</strong> and wait for it to finish. Type <code>kringle</code> into the <em>Type to filter…</em> box, open the <em>Available</em> tab, and click <strong>Install…</strong> next to <strong>luci-app-kringle</strong>. Then confirm with <strong>Install</strong>. The Kringle server comes with it and starts straight away.</p>
+          </div></li>
+          <li><span class="num">5</span><div>
+            <h3>Open Kringle</h3>
+            <p class="path">Services <b>›</b> Kringle</p>
+            <p>Reload the page first so the new menu item appears. The status line should say <em>Running</em>. Click <strong>Open Kringle</strong>, or share <code>http://192.168.1.1:8787</code> with anyone on your Wi-Fi. If it says <em>Not running</em>, tick <em>Enabled</em> and click <strong>Save &amp; Apply</strong>.</p>
+          </div></li>
+        </ol>
+      </div>
+
+      <div class="tabpanel" id="panel-ssh" role="tabpanel" aria-labelledby="tab-ssh">
+        <h3 class="nojs">In a terminal (SSH)</h3>
+        <ol>
+          <li><span class="num">1</span><div>
+            <h3>Connect to the router</h3>
+            <p>From a computer on your network, log in as root. Stock OpenWrt is at <code>192.168.1.1</code> unless you changed it.</p>
+            <div class="cmd"><pre>ssh root@192.168.1.1</pre></div>
+          </div></li>
+          <li><span class="num">2</span><div>
+            <h3>Trust the key and add the repository</h3>
+            <p>You only do this once.</p>
+            <div class="cmd"><pre>wget -O /etc/apk/keys/kringle.pem @PAGES_URL@/kringle.pem
 echo "@PAGES_URL@/@REPO_PATH@/packages.adb" &gt;&gt; /etc/apk/repositories.d/customfeeds.list</pre></div>
-        </div></li>
-        <li><span class="num">3</span><div>
-          <h3>Install Kringle</h3>
-          <p>This installs the Kringle server and its settings page in LuCI. It starts straight away.</p>
-          <div class="cmd"><pre>apk update
+          </div></li>
+          <li><span class="num">3</span><div>
+            <h3>Install Kringle</h3>
+            <p>This installs the server and its settings page in LuCI. It starts straight away.</p>
+            <div class="cmd"><pre>apk update
 apk add luci-app-kringle</pre></div>
-        </div></li>
-        <li><span class="num">4</span><div>
-          <h3>Open it</h3>
-          <p>In LuCI (the router’s web interface), go to <strong>Services → Kringle</strong>. The status line shows it’s running and has an <em>Open Kringle</em> link. By default that’s <code>http://192.168.1.1:8787</code>, and anyone on your Wi-Fi can use it.</p>
-          <p>If it says <em>Not running</em>, tick <em>Enabled</em> and click <em>Save &amp; Apply</em>.</p>
-        </div></li>
-        <li><span class="num">5</span><div>
-          <h3>Optional: let family outside your home join</h3>
-          <p>Allow the port through the firewall. In LuCI, go to <strong>Network → Firewall → Traffic Rules → Add</strong>. Set Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, and Action <em>accept</em>. If another router sits in front of the Flint 2, forward the port there too.</p>
-          <p>Then set <strong>Public address</strong> in Services → Kringle (for example <code>http://gifts.example.com:8787</code>), so the links Kringle hands out work from anywhere.</p>
-          <p class="note">Kringle’s links are the only keys to each group. If it’s reachable from the internet, put it behind HTTPS (a reverse proxy with a certificate) so the links can’t be read in transit.</p>
-        </div></li>
-      </ol>
+          </div></li>
+          <li><span class="num">4</span><div>
+            <h3>Open Kringle</h3>
+            <p>Go to <code>http://192.168.1.1:8787</code>. Settings are in LuCI under <span class="path inline">Services <b>›</b> Kringle</span>. If it isn’t running:</p>
+            <div class="cmd"><pre>service kringle enable
+service kringle start</pre></div>
+          </div></li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Optional: let family outside your home join</h3>
+      <p class="path">Network <b>›</b> Firewall <b>›</b> <em>Traffic Rules</em> tab <b>›</b> Add</p>
+      <p>Name it <em>Kringle</em>. Set Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, and Action <em>accept</em>. Click <strong>Save</strong>, then <strong>Save &amp; Apply</strong>. If another router sits in front of the Flint 2, forward the port there too.</p>
+      <p class="path" style="margin-top:14px">Services <b>›</b> Kringle</p>
+      <p>Set <strong>Public address</strong> to the address people use from outside (for example <code>http://gifts.example.com:8787</code>), so the links Kringle hands out work from anywhere.</p>
+      <p class="note">Kringle’s links are the only keys to each group. If it’s reachable from the internet, put it behind HTTPS (a reverse proxy with a certificate) so the links can’t be read in transit.</p>
     </div>
 
     <div class="features two">
       <div class="panel">
         <h3>Updating</h3>
+        <p><span class="path inline">System <b>›</b> Software</span>: click <strong>Update lists…</strong>, then look in the <em>Updates</em> tab. Or in a terminal:</p>
         <div class="cmd"><pre>apk update &amp;&amp; apk upgrade kringle luci-app-kringle</pre></div>
-        <p style="margin-top:10px">Or use LuCI → System → Software. Settings and gift swaps are kept. After a firmware upgrade, repeat steps 2 and 3.</p>
+        <p class="muted small" style="margin-top:10px">Settings and gift swaps are kept. After a firmware upgrade, repeat the steps above to reinstall.</p>
       </div>
       <div class="panel">
         <h3>Removing</h3>
+        <p><span class="path inline">System <b>›</b> Software</span>: in the <em>Installed</em> tab, click <strong>Remove…</strong> on luci-app-kringle, then kringle. Or in a terminal:</p>
         <div class="cmd"><pre>apk del luci-app-kringle kringle
 rm -rf /etc/kringle   # also delete all gift swaps</pre></div>
       </div>
@@ -240,11 +304,39 @@ rm -rf /etc/kringle   # also delete all gift swaps</pre></div>
 <img class="town" src="assets/town.svg" alt="">
 
 <script>
+document.documentElement.classList.add("js");
+
+// Install tabs: Web (LuCI) by default. Without JavaScript both show, one after the other.
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll("[role=tab]"));
+  if (!tabs.length) return;
+  function select(tab, focus) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    });
+    if (focus) tab.focus();
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener("click", function () { select(t); });
+    t.addEventListener("keydown", function (e) {
+      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (d) { e.preventDefault(); select(tabs[(i + d + tabs.length) % tabs.length], true); }
+    });
+  });
+  document.querySelector(".tabs").hidden = false;
+  select(location.hash === "#ssh" ? tabs[1] : tabs[0]);
+})();
+
+// Copy buttons on every command and key.
 document.querySelectorAll(".cmd").forEach(function (box) {
   var b = document.createElement("button");
   b.type = "button"; b.className = "copy"; b.textContent = "Copy";
+  b.setAttribute("aria-label", "Copy to clipboard");
   b.addEventListener("click", function () {
-    var text = box.querySelector("pre").textContent.replace(/\s+#.*$/gm, "");
+    var text = box.querySelector("pre").textContent.replace(/[ \t]+#.*$/gm, "");
     navigator.clipboard.writeText(text).then(function () {
       b.textContent = "Copied!";
       setTimeout(function () { b.textContent = "Copy"; }, 1600);

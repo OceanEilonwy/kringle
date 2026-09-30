@@ -107,7 +107,10 @@ files=$(for f in "$repo"/*.apk; do
 	esac
 	printf '        <li><a href="%s/%s">%s</a>: %s</li>\n' "$repo_path" "$name" "$name" "$what"
 done)
-awk -v files="$files" '$0 == "@FILES@" { printf "%s\n", files; next } { print }' web/index.html |
+awk -v files="$files" -v key="$(cat "$PUBKEY")" '
+	$0 == "@FILES@" { printf "%s\n", files; next }
+	{ gsub(/@PUBKEY@/, key); print }
+' web/index.html |
 	sed -e "s#@PAGES_URL@#$PAGES_URL#g" -e "s#@REPO_PATH@#$repo_path#g" -e "s#@REPO_URL@#$REPO_URL#g" > site/index.html
 touch site/.nojekyll
 

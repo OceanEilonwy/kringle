@@ -29,25 +29,37 @@ canvas it was built from is in `design/`.
 
 Kringle has a project site with screenshots and step-by-step setup:
 **https://oceaneilonwy.github.io/kringle**. It also hosts Kringle's signed
-package repository. On the router (OpenWrt 25.12, `aarch64_cortex-a53`), over
-SSH:
+package repository for OpenWrt 25.12 on `aarch64_cortex-a53` (Flint 2).
+
+**In LuCI (no SSH needed):**
+
+1. Go to System › Administration › *Repo Public Keys*. Paste the contents of
+   [`openwrt/keys/kringle.pem`](openwrt/keys/kringle.pem) (or its URL,
+   `https://oceaneilonwy.github.io/kringle/kringle.pem`) and click
+   **Add key**.
+2. Go to System › Software › *Configure apk*. Add this line to
+   `customfeeds.list` and click **Save**:
+   `https://oceaneilonwy.github.io/kringle/openwrt/25.12/aarch64_cortex-a53/packages.adb`
+3. In System › Software, click **Update lists…**, filter for `kringle`, and
+   install **luci-app-kringle**. It pulls in `kringle`.
+4. Reload LuCI and go to Services › Kringle.
+
+**Or over SSH:**
 
 ```sh
-# once: trust the repository's key and add the repository
 wget -O /etc/apk/keys/kringle.pem https://oceaneilonwy.github.io/kringle/kringle.pem
 echo "https://oceaneilonwy.github.io/kringle/openwrt/25.12/aarch64_cortex-a53/packages.adb" >> /etc/apk/repositories.d/customfeeds.list
-
 apk update
 apk add luci-app-kringle        # pulls in kringle
 ```
 
-Then open LuCI → **Services → Kringle**. The status line shows whether it's
-running and links to it, which is `http://192.168.1.1:8787` by default. If
-it says *Not running*, run `service kringle start`, or tick *Enabled* and
-Save & Apply.
+Services › Kringle shows whether it's running and links to it, which is
+`http://192.168.1.1:8787` by default. If it says *Not running*, tick
+*Enabled* and Save & Apply.
 
-To update, run `apk update && apk upgrade kringle luci-app-kringle`, or use
-LuCI → System → Software. Settings and data are kept.
+To update, click **Update lists…** in System › Software and check the
+*Updates* tab, or run `apk update && apk upgrade kringle luci-app-kringle`.
+Settings and data are kept.
 
 ### Settings
 
