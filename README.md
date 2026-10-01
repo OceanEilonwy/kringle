@@ -97,8 +97,7 @@ By default only people on your Wi-Fi can open Kringle. To let others in, you
 
 > **Use the Traffic Rules tab, not Port Forwards.** Kringle runs on the
 > router itself, so there's nothing to forward. A Port Forward only redirects
-> traffic. It doesn't let it in, so phones on mobile data get "refused to
-> connect".
+> traffic. It doesn't let it in, and devices will get "refused to connect".
 
 **1. Allow the port in LuCI:** Network › Firewall › **Traffic Rules** tab ›
 **Add** (below the list of rules). Fill in the *General Settings* tab of the
@@ -139,7 +138,7 @@ the address people use from outside, with the port. For example
 *IPv4 Upstream*), or a domain name that points at it. The invite and
 personal links Kringle hands out use this address.
 
-**If a phone on mobile data gets "refused to connect":** the Traffic Rule is
+**If devices get "refused to connect":** the Traffic Rule is
 missing or not applied. Check with `nft list ruleset | grep 8787` on the
 router. You should see a line ending in `accept comment "!fw4: Kringle"`. A
 line with `redirect to :8787` and no `accept` means a Port Forward was added

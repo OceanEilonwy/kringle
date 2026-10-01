@@ -265,7 +265,7 @@ service kringle start</pre></div>
     <div class="panel">
       <h3>Optional: let family outside your home join</h3>
       <p>By default only people on your Wi-Fi can open Kringle. To let others in, allow its port through the router’s firewall with a <strong>Traffic Rule</strong>.</p>
-      <p class="note"><strong>Use the Traffic Rules tab, not Port Forwards.</strong> Kringle runs on the router itself, so there’s nothing to forward. A Port Forward doesn’t let the traffic in, and phones on mobile data get “refused to connect”.</p>
+      <p class="note"><strong>Use the Traffic Rules tab, not Port Forwards.</strong> Kringle runs on the router itself, so there’s nothing to forward. A Port Forward doesn’t let the traffic in, and devices will get “refused to connect”.</p>
       <p class="path" style="margin-top:14px">Network <b>›</b> Firewall <b>›</b> <em>Traffic Rules</em> tab <b>›</b> Add</p>
       <p>Fill in the <em>General Settings</em> tab: Name <em>Kringle</em>, Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, Action <em>accept</em>. Click <strong>Save</strong>, then <strong>Save &amp; Apply</strong>.</p>
       <p>Only if your ISP’s modem or router sits in front of the Flint 2: on <em>that</em> device, forward TCP port 8787 to the Flint 2. That’s the only place a port forward belongs.</p>
