@@ -265,9 +265,9 @@ cargo run -- --addr 127.0.0.1:8787   # http://127.0.0.1:8787
 cargo test                           # every page and action, plus the draw logic
 ```
 
-`static/town.svg` and `static/clouds.svg` are served from pre-gzipped
-copies. After editing one, run `gzip -9nkf static/town.svg` (or
-`clouds.svg`). A test fails if a `.gz` file is out of date.
+The stylesheet (`static/style.css`), script (`static/app.js`) and the two
+illustrations are gzipped by `build.rs` at build time and always served
+compressed. Edit the plain files; there is nothing to regenerate.
 
 Fonts: IM Fell English, by Igino Marini, under the SIL Open Font License
 (`static/fonts/OFL.txt`).

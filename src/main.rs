@@ -7,7 +7,7 @@
 //! that is rewritten atomically after every change.
 //!
 //! Everything is in this file: config, storage, the draw, HTTP handlers,
-//! HTML (maud), CSS and the little JavaScript. Fonts and the two
+//! and HTML (maud). The CSS, the little JavaScript, fonts and the two
 //! illustrations are compiled in from `static/`.
 
 use std::{
@@ -1109,18 +1109,21 @@ fn save_failed(e: io::Error) -> Res {
     )
 }
 
-/// The two SVG illustrations are embedded pre-gzipped (static/*.svg.gz, made
-/// with `gzip -9nk`), which saves ~24 KB of binary and makes pages load faster.
-/// Every browser accepts gzip, so they are always sent that way.
-const TOWN_SVG_GZ: &[u8] = include_bytes!("../static/town.svg.gz");
-const CLOUDS_SVG_GZ: &[u8] = include_bytes!("../static/clouds.svg.gz");
+/// The stylesheet, script and illustrations are embedded gzipped by build.rs,
+/// which keeps the binary small and pages fast. Every browser accepts gzip,
+/// so they are always sent that way.
+macro_rules! gz {
+    ($file:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/", $file, ".gz"))
+    };
+}
 
 fn asset(file: &str) -> Res {
     let (kind, gzipped, body): (&'static str, bool, &'static [u8]) = match file {
-        "style.css" => ("text/css; charset=utf-8", false, CSS.as_bytes()),
-        "app.js" => ("text/javascript; charset=utf-8", false, JS.as_bytes()),
-        "town.svg" => ("image/svg+xml", true, TOWN_SVG_GZ),
-        "clouds.svg" => ("image/svg+xml", true, CLOUDS_SVG_GZ),
+        "style.css" => ("text/css; charset=utf-8", true, gz!("style.css")),
+        "app.js" => ("text/javascript; charset=utf-8", true, gz!("app.js")),
+        "town.svg" => ("image/svg+xml", true, gz!("town.svg")),
+        "clouds.svg" => ("image/svg+xml", true, gz!("clouds.svg")),
         "fell.woff2" => (
             "font/woff2",
             false,
@@ -2105,265 +2108,6 @@ const ONE_WAY: &str = r##"<svg class="rule-icon" viewBox="0 0 30 22" fill="none"
 const TAG_STRING: &str = r##"<svg class="string" viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true"><path d="M100 50 C 70 10, 40 30, 10 6" fill="none" stroke="#C8962F" stroke-width="2.5" stroke-linecap="round"/></svg>"##;
 
 // ---------------------------------------------------------------------------
-// Stylesheet: "Bethlehem" (limestone panels, etched headings, daytime sky)
-// ---------------------------------------------------------------------------
-
-const CSS: &str = r##"
-@font-face{font-family:"IM Fell English";src:url(/static/fell.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:"IM Fell English";src:url(/static/fell-italic.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
-:root{
-  --ink:#2B1A0C;--muted:#4E341C;--stone:#E6D6B6;--stone2:#D6C29C;--field:#FBF6EA;--edge:#B39A70;--line:#A88F68;
-  --red:#9B2C1F;--red-ink:#FFF4E0;--red-text:#7A1E12;--olive:#3F4C18;--olive-soft:#D3CF9C;--gold:#C8962F;--gold-soft:#EAD29A;
-  --danger:#8A1F14;--danger-soft:#F0CDB8;--sky-ink:#0E1C28;--sky-muted:#1B2E3C;--sky-accent:#6E1A12;
-  --display:"IM Fell English",Georgia,serif;--body:Georgia,"Times New Roman",serif;
-  --etch:0 1px 0 rgba(255,240,210,.6),0 -1px 0 rgba(60,30,0,.3);--shadow:4px 5px 0 rgba(20,10,0,.5);
-  --fall:linear-gradient(180deg,rgba(255,251,240,.45),rgba(255,251,240,0) 45%,rgba(120,96,60,.06));
-}
-*{box-sizing:border-box}
-html{background:#EEF5FA}
-body{margin:0;position:relative;min-height:100vh;overflow-x:hidden;color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;
-  background:#8CBCE6 linear-gradient(to bottom,#5E9BD6 0%,#8CBCE6 40%,#C6E0F2 75%,#EEF5FA 100%) no-repeat;background-size:100% 100%}
-:focus-visible{outline:2px dotted var(--gold);outline-offset:3px}
-p{margin:0}
-a{color:var(--red-text)}
-h1,h2{font-family:var(--display);font-weight:400;margin:0;line-height:1.08}
-h1{font-size:clamp(34px,6vw,52px);overflow-wrap:anywhere}
-h2{font-size:26px}
-.panel h1,.panel h2,.drawn-card h2,.invite h1{text-shadow:var(--etch)}
-svg.i{width:18px;height:18px;flex-shrink:0}
-
-.sky{position:absolute;left:0;right:0;top:0;height:720px;overflow:hidden;pointer-events:none}
-.sun{position:absolute;left:calc(50% + 70px);top:40px;width:150px;height:150px;border-radius:50%;
-  background:radial-gradient(circle,#FFF9E6 0 30%,rgba(255,249,230,.5) 45%,rgba(255,249,230,0) 70%)}
-.clouds{position:absolute;left:0;top:0;width:100%;height:720px;object-fit:cover;object-position:50% 0}
-.town{position:absolute;left:0;bottom:0;width:100%;height:420px;object-fit:cover;object-position:50% 100%;pointer-events:none}
-
-header.site{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;background:var(--stone) var(--fall)}
-.brand{display:flex;align-items:center;gap:10px;color:var(--ink);text-decoration:none;font-family:var(--display);font-size:28px;text-shadow:var(--etch)}
-.brand svg{width:34px;height:34px}
-.tagline,.hi{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:15px;font-weight:700;color:var(--muted)}
-.badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;background:var(--gold-soft);font-size:13px;font-weight:700}
-.band{position:relative;z-index:1;height:10px;background:repeating-linear-gradient(-45deg,var(--edge) 0 10px,var(--stone) 10px 20px)}
-main{position:relative;z-index:1;width:100%;max-width:720px;margin:0 auto;padding:32px 16px 280px;display:flex;flex-direction:column;gap:20px}
-
-.panel{display:flex;flex-direction:column;gap:14px;padding:24px;background:var(--stone) var(--fall);border:4px groove var(--edge);border-radius:15px;box-shadow:var(--shadow)}
-.panel.gold{background:var(--gold-soft);border:2px dashed var(--gold);box-shadow:none}
-.stack{display:flex;flex-direction:column;gap:18px}
-.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.aside{flex-shrink:0;font-family:var(--display);font-style:italic;font-size:22px;color:var(--red-text)}
-.muted{color:var(--muted)}
-.small{font-size:14px}
-.center{text-align:center}
-.intro{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
-.onsky{color:var(--sky-ink)}
-.onsky-muted{color:var(--sky-muted);font-weight:700}
-.plate{align-self:flex-start;max-width:100%;padding:3px 14px 5px;background:var(--stone) var(--fall);border:4px groove var(--edge);border-radius:10px;
-  box-shadow:var(--shadow);font-family:var(--display);font-style:italic;font-size:24px;color:var(--red-text);overflow-wrap:anywhere}
-.plate.small{padding:10px 16px;font-family:var(--body);font-style:normal;font-size:15px;color:var(--ink)}
-.lock{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted)}
-.error{padding:10px 14px;border-radius:10px;background:var(--danger-soft);color:var(--danger);font-weight:700}
-
-label.field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:15px;font-weight:700}
-.hint{font-size:13px;font-weight:400;color:var(--muted)}
-input[type=text],textarea,select{width:100%;min-width:0;min-height:48px;padding:0 14px;border:2px solid var(--edge);border-radius:8px;background:var(--field);
-  box-shadow:inset 0 1px 2px rgba(80,60,30,.18);color:var(--ink);font:inherit;font-size:17px;font-weight:700}
-textarea{min-height:120px;padding:12px 14px;line-height:1.45;resize:vertical}
-input::placeholder,textarea::placeholder{color:#76624C;font-weight:400;opacity:1}
-.money{display:flex;align-items:center;gap:8px}
-.money span{font-size:17px;font-weight:700;color:var(--muted)}
-.check{display:flex;align-items:center;gap:12px;min-height:48px;padding:0 14px;border-radius:10px;background:var(--gold-soft);font-weight:700;cursor:pointer}
-.check.plain{padding:0;background:none}
-.check input{width:20px;height:20px;margin:0;accent-color:var(--red)}
-
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:44px;padding:0 16px;border:3px outset #CDB68C;border-radius:10px;
-  background:var(--stone) var(--fall);color:var(--ink);font:inherit;font-size:15px;font-weight:700;text-decoration:none;cursor:pointer}
-.btn.primary{border-color:#C0493A;background:var(--red);color:var(--red-ink)}
-.btn.big{width:100%;min-height:58px;font-size:19px}
-.btn.small{min-height:40px;padding:0 12px;font-size:14px}
-.btn:disabled{border:3px solid var(--line);background:var(--stone2);color:var(--muted);cursor:not-allowed}
-.iconbtn{flex-shrink:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;border:0;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer}
-
-summary{cursor:pointer;list-style:none}
-summary::-webkit-details-marker{display:none}
-summary.link{display:inline-flex;align-items:center;min-height:44px;color:var(--red-text);font-weight:700;text-decoration:underline}
-.disclose>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;padding:0 14px;border:3px outset #CDB68C;border-radius:10px;
-  background:var(--stone2) var(--fall);font-weight:700}
-.disclose>summary::after{content:"";width:9px;height:9px;margin-top:-4px;border-right:2.5px solid currentColor;border-bottom:2.5px solid currentColor;transform:rotate(45deg)}
-.disclose[open]>summary::after{margin-top:4px;transform:rotate(-135deg)}
-.inset{display:flex;flex-direction:column;gap:12px;margin-top:12px;padding:14px;border:2px solid var(--edge);border-radius:10px;background:var(--stone2) var(--fall)}
-
-.stephead{display:flex;align-items:center;gap:12px}
-.num{flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:2px outset #F0D48A;border-radius:10px;background:var(--gold);font-family:var(--display);font-size:20px}
-.count{font-family:var(--body);font-size:16px;color:var(--muted)}
-.adminlink{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;border:2px dashed var(--gold);border-radius:10px;background:var(--gold-soft)}
-.adminlink p{flex:1 1 220px;font-size:14px}
-.linkrow{display:flex;gap:8px;flex-wrap:wrap}
-.linkrow input{flex:1 1 220px;width:auto;font-size:15px}
-.qr{margin-top:8px}
-.qr svg{display:block;width:200px;height:200px;border:2px solid var(--edge);border-radius:8px}
-
-.chips{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
-.chips li{max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--stone2);font-size:15px;font-weight:700}
-.chips li.empty{border-style:dashed;background:none;font-weight:400;color:var(--muted)}
-.rows{list-style:none;margin:8px 0 0;padding:0}
-.rows li{display:flex;align-items:center;gap:10px;min-height:48px;border-top:1px solid var(--line)}
-.rows .name{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:700}
-.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:var(--stone2);color:var(--muted);font-size:13px;font-weight:700}
-.pill.yes{background:var(--olive-soft);color:var(--olive)}
-
-.rulegrid{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px 14px;align-items:end}
-.cant{height:48px;display:flex;align-items:center;color:var(--danger)}
-.ruleactions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.rules li{display:flex;align-items:center;gap:10px;min-height:48px;padding:2px 4px 2px 12px;border:1px solid var(--line);border-radius:10px;background:var(--stone)}
-.pair{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;font-weight:700}
-.pair>span{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.pair>span[role=img]{flex-shrink:0;display:flex;overflow:visible}
-.rule-icon{width:30px;height:22px;color:var(--danger)}
-.ok{display:flex;gap:10px;align-items:flex-start;font-size:15px}
-.ok svg{color:var(--olive)}
-.warn{padding:10px 12px;border-radius:10px;background:var(--gold-soft);font-size:14px}
-.problem{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:10px;background:var(--danger-soft);font-size:15px}
-.problem svg{color:var(--danger)}
-.problem strong{display:block;color:var(--danger)}
-
-.drawn-card{display:flex;flex-direction:column;gap:14px;padding:24px;border:4px groove #6E1D14;border-radius:15px;background:var(--red);color:var(--red-ink);box-shadow:var(--shadow)}
-.drawn-card h2{font-size:34px;text-shadow:0 -1px 0 rgba(0,0,0,.35)}
-.kicker{font-size:15px;font-weight:700}
-.bar{height:14px;overflow:hidden;border:2px inset #6E1D14;border-radius:10px;background:rgba(0,0,0,.25)}
-.bar span{display:block;height:100%;background:var(--gold)}
-
-.invite{position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 24px 24px;text-align:center;
-  border:4px groove #6E1D14;border-radius:15px;background:var(--red);color:var(--red-ink);box-shadow:var(--shadow)}
-.invite h1{text-shadow:0 -1px 0 rgba(0,0,0,.35)}
-.invite .hole{position:absolute;top:12px;left:50%;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#A9CEEC}
-.invite .from{margin-top:8px;font-family:var(--display);font-style:italic;font-size:24px}
-.pills span{display:inline-block;padding:6px 12px;border:1.5px solid var(--red-ink);border-radius:999px;font-size:14px;font-weight:700}
-.faces{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;font-weight:700}
-.faces .f{display:flex}
-.faces .f span{width:32px;height:32px;margin-left:-8px;display:flex;align-items:center;justify-content:center;border:2px solid var(--red);border-radius:50%;
-  background:var(--gold-soft);color:var(--ink);font-size:12px}
-.faces .f span:first-child{margin-left:0}
-
-.meintro{display:flex;flex-direction:column;gap:12px;align-items:flex-start;color:var(--sky-ink)}
-.meintro h1 em{color:var(--sky-accent)}
-.meintro .gift{width:100px;height:100px}
-.grid2{display:flex;flex-direction:column;gap:20px}
-.grid2>div{display:flex;flex-direction:column;gap:20px}
-.timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
-.timeline li{display:flex;gap:14px}
-.dot{flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:50%}
-.dot.done{background:var(--olive);color:var(--red-ink)}
-.dot.now{border:2.5px solid var(--red-text)}
-.dot.now::after{content:"";width:12px;height:12px;border-radius:50%;background:var(--red-text)}
-.dot.later{background:var(--stone2);color:var(--muted)}
-.wishtext{font-family:var(--display);font-style:italic;font-size:24px;line-height:1.25;white-space:pre-line;overflow-wrap:anywhere}
-
-.tagpage{display:flex;flex-direction:column;align-items:center;gap:24px;text-align:center}
-.tagpage .plate{align-self:center}
-.giftbig{width:min(260px,70vw);height:auto;transform:rotate(-4deg)}
-.unwrap{width:auto;min-width:280px;padding:0 28px}
-.tagwrap{position:relative;width:min(460px,100%);margin-top:32px;transform:rotate(-2.5deg);filter:drop-shadow(0 18px 24px rgba(20,10,0,.45))}
-.tagwrap .string{position:absolute;left:0;top:-44px;width:100%;height:60px}
-.tag{position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;padding:64px 36px 32px;clip-path:polygon(50% 0,100% 16%,100% 100%,0 100%,0 16%);
-  border-radius:0 0 18px 18px;background:var(--stone) var(--fall)}
-.tag .hole{position:absolute;top:22px;left:50%;width:18px;height:18px;margin-left:-9px;border:3px solid var(--gold);border-radius:50%;background:#A9CEEC}
-.tag .to{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted)}
-.who{max-width:100%;font-family:var(--display);font-style:italic;line-height:.95;color:var(--red-text);text-shadow:var(--etch);overflow-wrap:anywhere}
-.who.xl{font-size:106px}.who.l{font-size:83px}.who.m{font-size:70px}.who.s{font-size:58px}
-.tag .full{margin-top:-6px;font-size:15px;font-weight:700;color:var(--muted);overflow-wrap:anywhere}
-.tag .stripe{width:100%;height:8px;border-radius:4px;background:repeating-linear-gradient(-45deg,var(--edge) 0 8px,var(--stone) 8px 16px)}
-.tag .label{max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)}
-.wish-hand{font-family:var(--display);font-style:italic;font-size:30px;line-height:1.15;white-space:pre-line;overflow-wrap:anywhere}
-.wish-hand.smaller{font-size:24px}
-.wish-body{width:100%;text-align:left;white-space:pre-line;overflow-wrap:anywhere;line-height:1.5}
-.more{width:100%}
-.more[open]>p.wish-body{margin-top:8px}
-.gold-pill{background:var(--gold-soft);color:var(--ink)}
-.tag .from{font-size:14px;font-weight:700;color:var(--muted)}
-.tag .from em{font-family:var(--display);font-size:22px}
-.actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
-.panel.narrow{width:100%;text-align:left}
-
-@media (min-width:900px){
-  main:has(.grid2){max-width:1120px}
-  .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}
-}
-@media (max-width:560px){
-  .panel{padding:18px}
-  .tagline{display:none}
-  .rulegrid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-  .cant{display:none}
-  .tag{padding:64px 22px 32px}
-  .who.xl{font-size:77px}.who.l{font-size:61px}.who.m{font-size:48px}.who.s{font-size:38px}
-  .wish-hand{font-size:26px}
-  .unwrap{min-width:0;width:100%}
-}
-"##;
-
-// ---------------------------------------------------------------------------
-// The only JavaScript: copy buttons, confirmations and polling. Everything
-// works without it; it just saves some taps and refreshes.
-// ---------------------------------------------------------------------------
-
-const JS: &str = r##""use strict";
-(function () {
-  function copy(text, button) {
-    function done() {
-      var old = button.textContent;
-      button.textContent = "Copied!";
-      setTimeout(function () { button.textContent = old; }, 1600);
-    }
-    function fallback() {
-      var t = document.createElement("textarea");
-      t.value = text;
-      t.setAttribute("readonly", "");
-      t.style.position = "fixed";
-      t.style.opacity = "0";
-      document.body.appendChild(t);
-      t.select();
-      try { document.execCommand("copy"); done(); } catch (e) {}
-      t.remove();
-    }
-    // Routers usually serve plain http, where the clipboard API is off.
-    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
-    else fallback();
-  }
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest("[data-copy]");
-    if (b) { e.preventDefault(); copy(b.getAttribute("data-copy"), b); }
-    if (e.target.matches("input[readonly]")) e.target.select();
-  });
-  document.addEventListener("submit", function (e) {
-    var f = e.target.closest("form[data-confirm]");
-    if (f && !window.confirm(f.getAttribute("data-confirm"))) e.preventDefault();
-  });
-  function every(ms, fn) { setInterval(function () { if (!document.hidden) fn(); }, ms); }
-  // Swap in fresh copies of a few elements (e.g. who's joined) from the same page.
-  document.querySelectorAll("[data-poll]").forEach(function (el) {
-    var url = el.getAttribute("data-poll"), ids = el.getAttribute("data-poll-ids").split(" ");
-    every(10000, function () {
-      fetch(url, { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
-        if (!html) return;
-        var doc = new DOMParser().parseFromString(html, "text/html");
-        ids.forEach(function (id) {
-          var cur = document.getElementById(id), next = doc.getElementById(id);
-          if (cur && next) cur.replaceWith(document.importNode(next, true));
-        });
-      }).catch(function () {});
-    });
-  });
-  // Reload once names are drawn so the gift tag appears.
-  document.querySelectorAll("[data-reload-when]").forEach(function (el) {
-    var url = el.getAttribute("data-reload-when");
-    every(10000, function () {
-      fetch(url, { cache: "no-store" }).then(function (r) { if (r.status === 200) location.reload(); }).catch(function () {});
-    });
-  });
-})();
-"##;
-
-// ---------------------------------------------------------------------------
 // End-to-end tests over the real router
 // ---------------------------------------------------------------------------
 
@@ -2764,10 +2508,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn svgs_are_served_gzipped_and_match_their_sources() {
+    async fn text_assets_are_served_gzipped_and_match_their_sources() {
         use std::io::Read as _;
         let (r, path) = test_app();
         for (file, source) in [
+            ("style.css", &include_bytes!("../static/style.css")[..]),
+            ("app.js", &include_bytes!("../static/app.js")[..]),
             ("town.svg", &include_bytes!("../static/town.svg")[..]),
             ("clouds.svg", &include_bytes!("../static/clouds.svg")[..]),
         ] {
@@ -2777,10 +2523,7 @@ mod tests {
             flate2::read::GzDecoder::new(&res.body[..])
                 .read_to_end(&mut plain)
                 .unwrap();
-            assert_eq!(
-                plain, source,
-                "static/{file}.gz is stale: run gzip -9nkf static/{file}"
-            );
+            assert_eq!(plain, source, "{file}");
         }
         let _ = fs::remove_file(path);
     }
