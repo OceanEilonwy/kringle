@@ -48,7 +48,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'port', _('Port'),
-			_('TCP port Kringle listens on. Forward this port if people outside your network should reach it.'));
+			_('TCP port Kringle listens on. To let people outside your network in, allow this port with a rule under Network › Firewall › Traffic Rules (not Port Forwards).'));
 		o.datatype = 'port';
 		o.placeholder = '8787';
 		o.rmempty = false;

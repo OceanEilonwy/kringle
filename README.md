@@ -92,16 +92,60 @@ else (say `/etc`), the service refuses to start and says why in the log.
 
 ### Reaching it from outside your home
 
-By default only people on your Wi-Fi can open Kringle. To let others in,
-forward its port:
+By default only people on your Wi-Fi can open Kringle. To let others in, you
+**allow** its port through the router's firewall with a *Traffic Rule*.
 
-1. In LuCI, go to Network → Firewall → Traffic Rules → Add. Set Protocol TCP,
-   Source zone `wan`, Destination zone *Device (input)*, Destination port
-   `8787`, Action *accept*. If another router or modem sits in front of the
-   Flint 2, forward TCP port 8787 to it there too.
-2. Set **Public address** to your internet address and port (for example
-   `http://203.0.113.7:8787`, shown under Status → Overview), so the invite
-   and personal links Kringle hands out work from outside.
+> **Use the Traffic Rules tab, not Port Forwards.** Kringle runs on the
+> router itself, so there's nothing to forward. A Port Forward only redirects
+> traffic. It doesn't let it in, so phones on mobile data get "refused to
+> connect".
+
+**1. Allow the port in LuCI:** Network › Firewall › **Traffic Rules** tab ›
+**Add** (below the list of rules). Fill in the *General Settings* tab of the
+dialog:
+
+| Field | Set it to |
+|---|---|
+| Name | `Kringle` |
+| Protocol | `TCP` |
+| Source zone | `wan` |
+| Destination zone | `Device (input)` |
+| Destination port | `8787` (or the port set in Services › Kringle) |
+| Action | `accept` |
+
+Click **Save**, then **Save & Apply** at the bottom of the page.
+
+Or in a terminal:
+
+```sh
+uci add firewall rule
+uci set firewall.@rule[-1].name=Kringle
+uci set firewall.@rule[-1].src=wan
+uci set firewall.@rule[-1].proto=tcp
+uci set firewall.@rule[-1].dest_port=8787
+uci set firewall.@rule[-1].target=ACCEPT
+uci commit firewall
+service firewall reload
+```
+
+**2. Only if another router or modem sits in front of the Flint 2** (your ISP's
+box): on *that* device, forward TCP port 8787 to the Flint 2's address on that
+network. This is the only place a port forward belongs. Skip this step if the
+Flint 2 is connected straight to your internet line.
+
+**3. Set the public address:** Services › Kringle. Set **Public address** to
+the address people use from outside, with the port. For example
+`http://203.0.113.7:8787` (your internet address is under Status › Overview ›
+*IPv4 Upstream*), or a domain name that points at it. The invite and
+personal links Kringle hands out use this address.
+
+**If a phone on mobile data gets "refused to connect":** the Traffic Rule is
+missing or not applied. Check with `nft list ruleset | grep 8787` on the
+router. You should see a line ending in `accept comment "!fw4: Kringle"`. A
+line with `redirect to :8787` and no `accept` means a Port Forward was added
+instead of the Traffic Rule. Delete it under Network › Firewall › *Port
+Forwards* and add the Traffic Rule above. A *timeout* rather than a refusal
+usually means a router in front of the Flint 2 still needs step 2.
 
 Kringle serves plain HTTP. If you want HTTPS, put your own reverse proxy in
 front of it. Kringle respects `X-Forwarded-Proto` and `X-Forwarded-Host`, so

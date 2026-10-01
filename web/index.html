@@ -44,6 +44,7 @@ main{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:48px 20p
 .panel{background:var(--stone) var(--fall);border:4px groove var(--edge);border-radius:15px;box-shadow:var(--shadow);padding:28px}
 .panel h2{font-size:34px;text-shadow:var(--etch);margin-bottom:12px}
 .panel h3{font-size:24px;text-shadow:var(--etch);margin-bottom:6px}
+.panel>p+p,.panel>.path+p{margin-top:8px}
 .plate{display:inline-block;padding:3px 14px 5px;background:var(--stone) var(--fall);border:4px groove var(--edge);border-radius:10px;box-shadow:var(--shadow);
   font-family:var(--display);font-style:italic;font-size:22px;color:var(--red-text)}
 .muted{color:var(--muted)}
@@ -263,11 +264,22 @@ service kringle start</pre></div>
 
     <div class="panel">
       <h3>Optional: let family outside your home join</h3>
-      <p>By default only people on your Wi-Fi can open Kringle. To let others in, forward its port.</p>
-      <p class="path">Network <b>›</b> Firewall <b>›</b> <em>Traffic Rules</em> tab <b>›</b> Add</p>
-      <p>Name it <em>Kringle</em>. Set Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, and Action <em>accept</em>. Click <strong>Save</strong>, then <strong>Save &amp; Apply</strong>. If another router or modem sits in front of the Flint 2, forward TCP port 8787 to the Flint 2 there too.</p>
+      <p>By default only people on your Wi-Fi can open Kringle. To let others in, allow its port through the router’s firewall with a <strong>Traffic Rule</strong>.</p>
+      <p class="note"><strong>Use the Traffic Rules tab, not Port Forwards.</strong> Kringle runs on the router itself, so there’s nothing to forward. A Port Forward doesn’t let the traffic in, and phones on mobile data get “refused to connect”.</p>
+      <p class="path" style="margin-top:14px">Network <b>›</b> Firewall <b>›</b> <em>Traffic Rules</em> tab <b>›</b> Add</p>
+      <p>Fill in the <em>General Settings</em> tab: Name <em>Kringle</em>, Protocol <em>TCP</em>, Source zone <em>wan</em>, Destination zone <em>Device (input)</em>, Destination port <em>8787</em>, Action <em>accept</em>. Click <strong>Save</strong>, then <strong>Save &amp; Apply</strong>.</p>
+      <p>Only if your ISP’s modem or router sits in front of the Flint 2: on <em>that</em> device, forward TCP port 8787 to the Flint 2. That’s the only place a port forward belongs.</p>
       <p class="path" style="margin-top:14px">Services <b>›</b> Kringle</p>
-      <p>Set <strong>Public address</strong> to your internet address with the port, for example <code>http://203.0.113.7:8787</code>, so the links Kringle hands out work from anywhere. Your internet address is on <span class="path inline">Status <b>›</b> Overview</span> under <em>IPv4 Upstream</em>.</p>
+      <p>Set <strong>Public address</strong> to your internet address with the port, for example <code>http://203.0.113.7:8787</code>, or a domain name that points at it. The links Kringle hands out then work from anywhere. Your internet address is on <span class="path inline">Status <b>›</b> Overview</span> under <em>IPv4 Upstream</em>.</p>
+      <p style="margin-top:14px">Prefer a terminal? This adds the same Traffic Rule:</p>
+      <div class="cmd"><pre>uci add firewall rule
+uci set firewall.@rule[-1].name=Kringle
+uci set firewall.@rule[-1].src=wan
+uci set firewall.@rule[-1].proto=tcp
+uci set firewall.@rule[-1].dest_port=8787
+uci set firewall.@rule[-1].target=ACCEPT
+uci commit firewall
+service firewall reload</pre></div>
     </div>
 
     <div class="features two">
