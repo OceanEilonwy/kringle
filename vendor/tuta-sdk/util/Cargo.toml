@@ -1,0 +1,8 @@
+[package]
+name = "util"
+version = "365.261030.0"
+rust-version = "1.84.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "2.0.18"

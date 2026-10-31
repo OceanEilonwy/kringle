@@ -1,0 +1,45 @@
+{
+	"0": {
+		"name": "PersistenceResourcePostReturn",
+		"app": "base",
+		"version": 2,
+		"since": 1,
+		"type": "DATA_TRANSFER_TYPE",
+		"id": 0,
+		"rootId": "BGJhc2UAAA",
+		"versioned": false,
+		"encrypted": false,
+		"isPublic": true,
+		"targetTypeId": null,
+		"values": {
+			"1": {
+				"final": false,
+				"name": "_format",
+				"id": 1,
+				"type": "Number",
+				"cardinality": "One",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"2": {
+				"final": false,
+				"name": "generatedId",
+				"id": 2,
+				"type": "GeneratedId",
+				"cardinality": "ZeroOrOne",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"3": {
+				"final": false,
+				"name": "permissionListId",
+				"id": 3,
+				"type": "GeneratedId",
+				"cardinality": "One",
+				"encrypted": false,
+				"transferredAttributeId": null
+			}
+		},
+		"associations": {}
+	}
+}
