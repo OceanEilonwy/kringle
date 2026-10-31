@@ -13,8 +13,11 @@ their personal page.
 - **Secret by design.** The host sees who has opened their tag, never who got
   who. The draw is blocked if the rules would give a pair away, and the host
   is warned if the group is so small they could work it out from their own tag.
-- **Small and light.** It's a static binary of about 0.5 MB with no runtime
-  dependencies. It's fully async, so an idle router stays idle. The templates, CSS, fonts and artwork are compiled in. All
+- **Email, if you want it.** Each person gets their own link by email when
+  they join, and a link to unwrap their tag when names are drawn. Send through
+  any SMTP server or from a Tuta account. See [Email](#email).
+- **Small and light.** It's a static binary of about 3 MB with no runtime
+  dependencies (most of that is TLS and Tuta's encryption for email). It's fully async, so an idle router stays idle. The templates, CSS, fonts and artwork are compiled in. All
   state lives in one JSON file, rewritten atomically after each change.
 - **Works without JavaScript.** Every action is a plain form. A few lines of
   JS add copy buttons, confirmations and live refresh.
@@ -22,7 +25,8 @@ their personal page.
   (Services → Kringle) for the port, public address and other settings.
 
 The code is Rust ([hyper](https://hyper.rs) HTTP/1.1 on tokio, with
-[maud](https://maud.lambda.xyz) templates), all in `src/main.rs`. The design
+[maud](https://maud.lambda.xyz) templates), all in `src/main.rs` with email in
+`src/mail.rs`. Tuta's Rust SDK is vendored in `vendor/tuta-sdk/`. The design
 canvas it was built from is in `design/`.
 
 ## Install on the router
@@ -89,6 +93,52 @@ The data folder is private to that user (0700, with the data file 0600).
 Kringle only uses a folder that is its own: a new one, one it already owns,
 or one holding nothing but its data file. If *Data folder* points anywhere
 else (say `/etc`), the service refuses to start and says why in the log.
+
+### Email
+
+Off by default. Turn it on in Services › Kringle › **Email** (or with the
+`KRINGLE_MAIL*` environment variables below).
+
+- The host chooses **Require emails** when starting a group (on by default).
+  Then the host and everyone who joins must give an email address. With it
+  off, the email box is optional.
+- The host gets their admin link (and their own page, if they're in the
+  draw). Each guest gets their personal link when they join. The host does
+  **not** get an email when someone joins.
+- When the host draws names, everyone in the draw gets an email with the link
+  to unwrap their gift tag.
+- The host never sees anyone's address. Their page shows how many emails went
+  out, and for any that failed, who and why (the server's own words), with a
+  **Resend failed emails** button. The same reason is in the system log
+  (`logread -e kringle`).
+
+**SMTP:** any mail provider's SMTP server. TLS (port 465) is the default,
+STARTTLS (587) works too; certificates are checked against the Mozilla roots
+built into Kringle, so the router needs no CA bundle.
+
+**Tuta:** Tuta has no SMTP, so Kringle signs in to a Tuta account with Tuta's
+own SDK and sends from it, like the Tuta app does. Mail to other Tuta
+addresses is end-to-end encrypted; mail to anyone else is delivered normally
+by Tuta. Use an account without two-factor sign-in (a separate free account
+just for Kringle is a good idea; free accounts have sending limits).
+
+| Setting          | UCI option       | Env                      | Default               |
+|------------------|------------------|--------------------------|-----------------------|
+| Send email       | `mail`           | `KRINGLE_MAIL`           | off (`smtp`, `tuta`, `log`) |
+| Sender name      | `mail_from_name` | `KRINGLE_MAIL_FROM_NAME` | `Kringle`             |
+| SMTP server      | `smtp_host`      | `KRINGLE_SMTP_HOST`      |                       |
+| Security         | `smtp_security`  | `KRINGLE_SMTP_SECURITY`  | `tls` (`starttls`, `none`) |
+| Port             | `smtp_port`      | `KRINGLE_SMTP_PORT`      | 465 / 587 / 25        |
+| User name        | `smtp_user`      | `KRINGLE_SMTP_USER`      | none                  |
+| Password         | `smtp_password`  | `KRINGLE_SMTP_PASSWORD`  |                       |
+| Sender address   | `mail_from`      | `KRINGLE_MAIL_FROM`      | the SMTP user name    |
+| Tuta address     | `tuta_user`      | `KRINGLE_TUTA_USER`      |                       |
+| Tuta password    | `tuta_password`  | `KRINGLE_TUTA_PASSWORD`  |                       |
+
+`log` writes each email to the system log instead of sending it, which is
+handy for trying things out. The init script hands these settings to Kringle
+in its environment, so passwords never appear on a command line. A setting
+that's missing or wrong stops Kringle at start-up with the reason in the log.
 
 ### Reaching it from outside your home
 
@@ -179,10 +229,12 @@ scripts/build-openwrt.sh                        # -> dist/*.apk and site/
 1. It cross-compiles the binary with cargo on the latest nightly. It installs
    that toolchain itself; set `NIGHTLY=nightly-YYYY-MM-DD` to pick one. The
    standard library is rebuilt without panic messages, Debug formatting or
-   unwind tables (`-Zbuild-std`, `panic = immediate-abort`), which roughly
-   halves the binary to about 0.5 MB. Tests and everyday development use
-   stable. Everything in the dependency tree is pure Rust, so rust-lld and
-   the musl files in the rustup target are enough (see `.cargo/config.toml`).
+   unwind tables (`-Zbuild-std`, `panic = immediate-abort`). Tests and
+   everyday development use stable. Tuta's SDK brings a little C (ring, the
+   Kyber post-quantum code, BLAKE3), so the build uses
+   [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) with zig
+   as the C cross compiler and linker: `cargo install cargo-zigbuild --locked`
+   and `pip install ziglang` (or any `zig` on `PATH`).
 2. The official OpenWrt SDK (`openwrt/sdk:mediatek-filogic-25.12.5`, in
    Docker) packages it with the LuCI app.
 3. The SDK writes a `packages.adb` index, signed with the repository key.
@@ -256,13 +308,16 @@ internet:
 
 The host can't see pairs through the app. Anyone with root on the router can
 read `/etc/kringle/kringle.json`, which includes the draw, so whoever runs the
-router shouldn't be the one who peeks.
+router shouldn't be the one who peeks. The same file holds people's email
+addresses, and `/etc/config/kringle` holds the SMTP or Tuta password (both
+installed readable by root only).
 
 ## Develop
 
 ```sh
 cargo run -- --addr 127.0.0.1:8787   # http://127.0.0.1:8787
-cargo test                           # every page and action, plus the draw logic
+cargo test                           # every page and action, the draw logic, and email
+KRINGLE_MAIL=log cargo run           # emails are printed instead of sent
 ```
 
 The stylesheet (`static/style.css`), script (`static/app.js`) and the two

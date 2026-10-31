@@ -6,9 +6,12 @@
 //! unguessable link (admin, invite, personal). State lives in one JSON file
 //! that is rewritten atomically after every change.
 //!
-//! Everything is in this file: config, storage, the draw, HTTP handlers,
-//! and HTML (maud). The CSS, the little JavaScript, fonts and the two
-//! illustrations are compiled in from `static/`.
+//! Everything but email is in this file: config, storage, the draw, HTTP
+//! handlers, and HTML (maud). Email (SMTP or Tuta) is in `mail.rs`. The CSS,
+//! the little JavaScript, fonts and the two illustrations are compiled in
+//! from `static/`.
+
+mod mail;
 
 use std::{
     collections::HashMap,
@@ -81,6 +84,10 @@ USAGE: kringle [--addr HOST:PORT] [--data FILE] [--public-url URL] [--keep-days 
                 (env KRINGLE_KEEP_DAYS, default 120)
 ";
 
+fn usage() -> String {
+    format!("{USAGE}\n{}", mail::usage())
+}
+
 fn config() -> Config {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let mut cfg = Config {
@@ -97,7 +104,7 @@ fn config() -> Config {
     while let Some(arg) = args.next() {
         let mut value = |name: &str| {
             args.next().unwrap_or_else(|| {
-                eprintln!("{name} needs a value\n\n{USAGE}");
+                eprintln!("{name} needs a value\n\n{}", usage());
                 std::process::exit(2)
             })
         };
@@ -112,7 +119,7 @@ fn config() -> Config {
                 })
             }
             "-h" | "--help" => {
-                print!("{USAGE}");
+                print!("{}", usage());
                 std::process::exit(0)
             }
             "-V" | "--version" => {
@@ -120,7 +127,7 @@ fn config() -> Config {
                 std::process::exit(0)
             }
             other => {
-                eprintln!("unknown argument: {other}\n\n{USAGE}");
+                eprintln!("unknown argument: {other}\n\n{}", usage());
                 std::process::exit(2)
             }
         }
@@ -132,6 +139,10 @@ fn config() -> Config {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cfg = config();
+    let mail = mail::Transport::from_env().unwrap_or_else(|e| {
+        eprintln!("kringle: email settings: {e}");
+        std::process::exit(2)
+    });
     let mut store = Store::load(cfg.data.clone()).unwrap_or_else(|e| {
         eprintln!("kringle: can't read {}: {e}", cfg.data.display());
         std::process::exit(1)
@@ -154,13 +165,20 @@ async fn main() {
         cfg.addr,
         cfg.data.display()
     );
+    match &mail {
+        Some(m) => eprintln!("kringle: email: {}", m.describe()),
+        None => eprintln!("kringle: email is off (set KRINGLE_MAIL to turn it on)"),
+    }
     let app = Arc::new(App {
         store: Mutex::new(store),
         public_url: cfg.public_url,
         keep_secs,
         limiter: Mutex::new(HashMap::new()),
+        mail,
+        mail_wake: tokio::sync::Notify::new(),
     });
     tokio::spawn(housekeeping(app.clone()));
+    tokio::spawn(mail_worker(app.clone()));
     serve(listener, app, shutdown()).await;
 }
 
@@ -175,6 +193,171 @@ async fn housekeeping(app: Shared) {
         {
             eprintln!("kringle: saving after removing old groups failed: {e}");
         }
+    }
+}
+
+/// Send queued emails, one at a time, whenever something is queued.
+async fn mail_worker(app: Shared) {
+    loop {
+        deliver(&app).await;
+        app.mail_wake.notified().await;
+    }
+}
+
+/// Whom an email is for: a member, or a host who isn't in the draw.
+#[derive(Clone, Copy)]
+enum Recipient {
+    Member(u32),
+    Host,
+}
+
+/// Send every pending email, then return. A failure is logged and kept on
+/// the person with its reason, for the host to see and resend.
+async fn deliver(app: &App) {
+    let Some(transport) = &app.mail else { return };
+    loop {
+        let job = {
+            let mut st = lock(app);
+            next_letter(&mut st.data, app.public_url.as_deref())
+        };
+        let Some((admin, who, letter)) = job else {
+            return;
+        };
+        let result = transport.send(&letter).await;
+        let mut st = lock(app);
+        let Some(g) = st.by_admin(&admin) else {
+            continue;
+        };
+        if let Err(why) = &result {
+            eprintln!(
+                "kringle: email to {} in “{}” failed: {why}",
+                letter.to_name, g.name
+            );
+        }
+        let state = match who {
+            Recipient::Host => Some(&mut g.host_mail),
+            Recipient::Member(id) => g
+                .members
+                .iter_mut()
+                .find(|m| m.id == id)
+                .map(|m| &mut m.mail),
+        };
+        // Queued again meanwhile (say names were drawn while the welcome
+        // was going out): leave it queued so the newer email goes too.
+        if let Some(state) = state
+            && *state == MailState::Sending
+        {
+            *state = match result {
+                Ok(()) => MailState::Sent,
+                Err(why) => MailState::Failed(why),
+            };
+            if let Err(e) = st.save() {
+                eprintln!("kringle: saving email status failed: {e}");
+            }
+        }
+    }
+}
+
+/// The next queued email, marked as being sent: (group admin token, whom,
+/// the letter).
+fn next_letter(
+    data: &mut Data,
+    public_url: Option<&str>,
+) -> Option<(String, Recipient, mail::Letter)> {
+    for g in &mut data.groups {
+        let base = public_url.unwrap_or(&g.base).to_string();
+        let queued = |s: &MailState| matches!(s, MailState::Pending | MailState::Sending);
+        let who = if queued(&g.host_mail) && !g.host_email.is_empty() {
+            Recipient::Host
+        } else if let Some(m) = g
+            .members
+            .iter()
+            .find(|m| queued(&m.mail) && !m.email.is_empty())
+        {
+            Recipient::Member(m.id)
+        } else {
+            continue;
+        };
+        let letter = letter_for(g, who, &base);
+        match who {
+            Recipient::Host => g.host_mail = MailState::Sending,
+            Recipient::Member(id) => {
+                if let Some(m) = g.members.iter_mut().find(|m| m.id == id) {
+                    m.mail = MailState::Sending;
+                }
+            }
+        }
+        return Some((g.admin.clone(), who, letter));
+    }
+    None
+}
+
+/// The email someone gets now: the host's welcome with the admin link, a
+/// guest's welcome with their personal link, or, once names are drawn, the
+/// link to unwrap their gift tag.
+fn letter_for(g: &Group, who: Recipient, base: &str) -> mail::Letter {
+    let admin_url = format!("{base}/g/{}", g.admin);
+    let invite_url = format!("{base}/j/{}", g.invite);
+    let budget = if g.budget.is_empty() {
+        String::new()
+    } else {
+        format!(" The budget is ${}.", g.budget)
+    };
+    let (name, email, personal, is_host, drawn) = match who {
+        Recipient::Host => (g.host.as_str(), g.host_email.as_str(), None, true, false),
+        Recipient::Member(id) => {
+            let m = g.member(id).expect("member exists");
+            let url = format!("{base}/p/{}", m.token);
+            (
+                m.name.as_str(),
+                m.email.as_str(),
+                Some(url),
+                m.host,
+                g.drawn.is_some() && m.gives_to.is_some(),
+            )
+        }
+    };
+    let hi = format!("Hi {},", first_word(name));
+    let (subject, text) = if drawn {
+        let url = personal.unwrap_or_default();
+        (
+            format!("Names are drawn for {}", g.name),
+            format!(
+                "{hi}\n\n{} has drawn names for {}. Unwrap your gift tag to see who you’re giving to:\n\n{url}\n\nOnly you can see your tag.{budget}\n\nKringle",
+                first_word(&g.host),
+                g.name
+            ),
+        )
+    } else if is_host {
+        let own = match personal {
+            Some(url) => {
+                format!("Your own page, for your wishes and later your gift tag:\n{url}\n\n")
+            }
+            None => String::new(),
+        };
+        (
+            format!("Your gift swap {} is ready", g.name),
+            format!(
+                "{hi}\n\nYour group {} is set up.\n\nYour admin link. Keep it private: it’s the only key to the group.\n{admin_url}\n\n{own}Send this invite link to everyone taking part:\n{invite_url}\n\nKringle",
+                g.name
+            ),
+        )
+    } else {
+        let url = personal.unwrap_or_default();
+        (
+            format!("You’re in {}", g.name),
+            format!(
+                "{hi}\n\nYou’ve joined {}’s gift swap, {}. This is your personal link. Your gift tag appears there once names are drawn, and we’ll email you when that happens.\n\n{url}\n\nKeep it to yourself: it’s how you get back in.{budget}\n\nKringle",
+                first_word(&g.host),
+                g.name
+            ),
+        )
+    };
+    mail::Letter {
+        to_name: name.to_string(),
+        to: email.to_string(),
+        subject,
+        text,
     }
 }
 
@@ -237,7 +420,7 @@ struct Data {
     groups: Vec<Group>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 struct Group {
     name: String,
     host: String,
@@ -249,9 +432,23 @@ struct Group {
     next_id: u32,
     members: Vec<Member>,
     rules: Vec<Rule>,
+    /// Everyone must give an email to join. Groups from before emails
+    /// existed load with this off.
+    #[serde(default)]
+    require_email: bool,
+    /// The host's email when they aren't in the draw (otherwise it's on
+    /// their member entry), and how sending to it went.
+    #[serde(default)]
+    host_email: String,
+    #[serde(default)]
+    host_mail: MailState,
+    /// The address the group was created through, for links in emails when
+    /// no public address is configured.
+    #[serde(default)]
+    base: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 struct Member {
     id: u32,
     name: String,
@@ -260,6 +457,25 @@ struct Member {
     host: bool,
     opened: bool,
     gives_to: Option<u32>,
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    mail: MailState,
+}
+
+/// Where the latest email to someone is. `Pending` is the queue: the mail
+/// worker sends whatever is pending, so a restart picks up where it left off.
+/// Which email it is (welcome or "names are drawn") is decided when sending.
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum MailState {
+    #[default]
+    None,
+    Pending,
+    /// Picked up by the worker (in memory only; a stale one is retried).
+    Sending,
+    Sent,
+    Failed(String),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -844,6 +1060,10 @@ struct App {
     keep_secs: u64,
     /// Per-address allowance for starting groups: (groups left, last refill).
     limiter: Mutex<HashMap<IpAddr, (u32, u64)>>,
+    /// How to send email; `None` when email is off.
+    mail: Option<mail::Transport>,
+    /// Wakes the mail worker after something was queued.
+    mail_wake: tokio::sync::Notify,
 }
 
 impl App {
@@ -890,9 +1110,9 @@ where
     let (h, query) = (&parts.headers, parts.uri.query().unwrap_or(""));
     let segs: Vec<&str> = parts.uri.path().split('/').skip(1).collect();
     let mut res = match segs.as_slice() {
-        [""] if get => index(),
+        [""] if get => index(app),
         ["groups"] if post => match read_form(body).await {
-            Ok(f) => create(app, peer, &f),
+            Ok(f) => create(app, peer, &f, h),
             Err(res) => *res,
         },
         ["g", t] if get => admin(app, t, query, h),
@@ -910,6 +1130,7 @@ where
         },
         ["g", t, "draw"] if post => draw_names(app, t),
         ["g", t, "undraw"] if post => undraw(app, t),
+        ["g", t, "resend"] if post => resend(app, t),
         ["g", t, "delete"] if post => delete_group(app, t),
         ["deleted"] if get => page(deleted_page()),
         ["j", t] if get => join(app, t, h),
@@ -938,7 +1159,7 @@ fn is_route(segs: &[&str]) -> bool {
         [""] | ["groups"]
             | ["g", _]
             | ["deleted"]
-            | ["g", _, "rules" | "draw" | "undraw" | "delete"]
+            | ["g", _, "rules" | "draw" | "undraw" | "delete" | "resend"]
             | ["g", _, "rules" | "people", _, "delete"]
             | ["j", _]
             | ["p", _]
@@ -1158,24 +1379,51 @@ struct CreateForm {
     host: String,
     budget: String,
     plays: bool,
+    email: String,
+    require_email: bool,
 }
 
-fn index() -> Res {
+fn index(app: &App) -> Res {
     page(create_page(
         &CreateForm {
             plays: true,
+            require_email: true,
             ..Default::default()
         },
         None,
+        app.mail.is_some(),
     ))
 }
 
-fn create(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
+/// The email typed into a form: `Ok("")` when left empty and not required,
+/// else the cleaned address or the message to show.
+fn form_email(typed: &str, required: bool) -> Result<String, &'static str> {
+    if typed.trim().is_empty() {
+        return if required {
+            Err("Add your email. This group sends everyone their link by email.")
+        } else {
+            Ok(String::new())
+        };
+    }
+    mail::clean_address(typed).ok_or("That email address doesn’t look right.")
+}
+
+fn create(app: &App, peer: Option<IpAddr>, form: &Form, headers: &HeaderMap) -> Res {
+    let mail_on = app.mail.is_some();
     let f = CreateForm {
         group: form.get("group"),
         host: form.get("host"),
         budget: form.get("budget"),
         plays: form.has("plays"),
+        email: form.get("email"),
+        // Without a way to send email there's nothing to require.
+        require_email: mail_on && form.has("require_email"),
+    };
+    let create_page = |f: &CreateForm, e: Option<&str>| create_page(f, e, mail_on);
+    let email = if mail_on {
+        form_email(&f.email, f.require_email)
+    } else {
+        Ok(String::new())
     };
     let name = clean_line(&f.group, GROUP_MAX);
     let host = clean_line(&f.host, NAME_MAX);
@@ -1190,7 +1438,13 @@ fn create(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
     } else if host.is_empty() {
         Some("Add your name so people know who invited them.")
     } else {
-        None
+        email.as_ref().err().copied()
+    };
+    let email = email.unwrap_or_default();
+    let mail = if email.is_empty() {
+        MailState::None
+    } else {
+        MailState::Pending
     };
     if let Some(e) = error {
         return page(create_page(&f, Some(e)));
@@ -1222,18 +1476,24 @@ fn create(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
         next_id: 1,
         members: Vec::new(),
         rules: Vec::new(),
+        require_email: f.require_email,
+        base: base_url(app, headers),
+        ..Default::default()
     };
     if f.plays {
         g.members.push(Member {
             id: 1,
             name: host,
-            wishes: String::new(),
             token: token(),
             host: true,
-            opened: false,
-            gives_to: None,
+            email,
+            mail,
+            ..Default::default()
         });
         g.next_id = 2;
+    } else {
+        g.host_email = email;
+        g.host_mail = mail;
     }
     let admin = g.admin.clone();
     st.data.groups.push(g);
@@ -1241,6 +1501,8 @@ fn create(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
         st.data.groups.pop();
         return save_failed(e);
     }
+    drop(st);
+    app.mail_wake.notify_one();
     to(format!("/g/{admin}"))
 }
 
@@ -1355,7 +1617,8 @@ fn remove_person(app: &App, t: &str, id: u32) -> Res {
 }
 
 fn draw_names(app: &App, t: &str) -> Res {
-    admin_change(app, t, "draw", |g| {
+    let mail_on = app.mail.is_some();
+    let res = admin_change(app, t, "draw", |g| {
         if g.drawn.is_some() {
             return Some("drawn");
         }
@@ -1369,10 +1632,34 @@ fn draw_names(app: &App, t: &str) -> Res {
         for (m, r) in g.members.iter_mut().zip(assignment) {
             m.gives_to = Some(ids[r]);
             m.opened = false;
+            if mail_on && !m.email.is_empty() {
+                m.mail = MailState::Pending;
+            }
         }
         g.drawn = Some(now());
         None
-    })
+    });
+    app.mail_wake.notify_one();
+    res
+}
+
+/// Try every failed email again.
+fn resend(app: &App, t: &str) -> Res {
+    let res = admin_change(app, t, "mail", |g| {
+        let states = g
+            .members
+            .iter_mut()
+            .map(|m| &mut m.mail)
+            .chain([&mut g.host_mail]);
+        for state in states {
+            if matches!(state, MailState::Failed(_)) {
+                *state = MailState::Pending;
+            }
+        }
+        None
+    });
+    app.mail_wake.notify_one();
+    res
 }
 
 fn delete_group(app: &App, t: &str) -> Res {
@@ -1407,6 +1694,7 @@ fn undraw(app: &App, t: &str) -> Res {
 struct JoinForm {
     name: String,
     wishes: String,
+    email: String,
 }
 
 fn join(app: &App, t: &str, headers: &HeaderMap) -> Res {
@@ -1416,20 +1704,34 @@ fn join(app: &App, t: &str, headers: &HeaderMap) -> Res {
     };
     let returning =
         cookie(headers, "kringle").and_then(|c| g.members.iter().find(|m| m.token == c));
-    page(join_page(g, returning, &JoinForm::default(), None))
+    let ask_email = app.mail.is_some() || g.require_email;
+    page(join_page(
+        g,
+        returning,
+        &JoinForm::default(),
+        None,
+        ask_email,
+    ))
 }
 
 fn join_post(app: &App, t: &str, form: &Form) -> Res {
     let f = JoinForm {
         name: form.get("name"),
         wishes: form.get("wishes"),
+        email: form.get("email"),
     };
     let mut st = lock(app);
     let Some(g) = st.by_invite(t) else {
         return not_found();
     };
+    let ask_email = app.mail.is_some() || g.require_email;
     let name = clean_line(&f.name, NAME_MAX);
     let wishes = clean_text(&f.wishes, WISHES_MAX);
+    let email = if ask_email {
+        form_email(&f.email, g.require_email)
+    } else {
+        Ok(String::new())
+    };
     let error = if g.drawn.is_some() {
         Some("Names have already been drawn, so this group is closed.".to_string())
     } else if name.is_empty() {
@@ -1445,20 +1747,26 @@ fn join_post(app: &App, t: &str, form: &Form) -> Res {
     } else if g.members.len() >= MEMBERS_MAX {
         Some("This group is full.".to_string())
     } else {
-        None
+        email.as_ref().err().map(|e| e.to_string())
     };
     if let Some(e) = error {
-        return page(join_page(g, None, &f, Some(&e)));
+        return page(join_page(g, None, &f, Some(&e), ask_email));
     }
+    let email = email.unwrap_or_default();
+    let mail = if email.is_empty() || app.mail.is_none() {
+        MailState::None
+    } else {
+        MailState::Pending
+    };
     let token = token();
     g.members.push(Member {
         id: g.next_id,
         name,
         wishes,
         token: token.clone(),
-        host: false,
-        opened: false,
-        gives_to: None,
+        email,
+        mail,
+        ..Default::default()
     });
     g.next_id += 1;
     if let Err(e) = st.save() {
@@ -1467,6 +1775,8 @@ fn join_post(app: &App, t: &str, form: &Form) -> Res {
         }
         return save_failed(e);
     }
+    drop(st);
+    app.mail_wake.notify_one();
     // Lets them get back in by reopening the invite link on the same phone.
     let mut res = to(format!("/p/{token}"));
     let cookie = format!("kringle={token}; Path=/j/{t}; Max-Age=15552000; HttpOnly; SameSite=Lax");
@@ -1585,7 +1895,7 @@ fn icon(svg: &'static str) -> Markup {
     PreEscaped(svg.to_string())
 }
 
-fn create_page(f: &CreateForm, error: Option<&str>) -> Markup {
+fn create_page(f: &CreateForm, error: Option<&str>, mail_on: bool) -> Markup {
     layout(
         "Start a gift swap · Kringle",
         html! { span.tagline { "No sign-up. No app. Just a link." } },
@@ -1616,6 +1926,18 @@ fn create_page(f: &CreateForm, error: Option<&str>) -> Markup {
                 label.check {
                     input type="checkbox" name="plays" value="1" checked[f.plays];
                     "I’m in the draw too"
+                }
+                @if mail_on {
+                    label.field {
+                        "Your email"
+                        input type="email" name="email" maxlength="254" placeholder="rosa@example.com" autocomplete="email" value=(f.email);
+                        span.hint { "We email you your admin link. Needed when emails are required." }
+                    }
+                    label.check {
+                        input type="checkbox" name="require_email" value="1" checked[f.require_email];
+                        "Require emails"
+                    }
+                    p.muted.small { "Everyone who joins gives an email and gets their link by email, and again when names are drawn." }
                 }
                 button.btn.primary.big type="submit" { (icon(GIFT_ICON)) "Create group" }
                 p.lock { (icon(LOCK)) "No accounts. You’ll get a private admin link. It’s the only key to your group, so keep it safe." }
@@ -1708,6 +2030,7 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                 p.plate.small { "You’re in the draw too. " a href=(url) { "Your own page" } " has your wishes and, later, your gift tag." }
             }
             @if let Some(e) = error { p.error role="alert" { (e) } }
+            (mail_panel(g, &admin_path))
 
             @if let Some(at) = g.drawn {
                 section.drawn-card #draw {
@@ -1874,6 +2197,55 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
     )
 }
 
+/// How the emails went, with the reason for each failure and a resend
+/// button. Nothing when nobody in the group gave an email.
+fn mail_panel(g: &Group, admin_path: &str) -> Markup {
+    let people: Vec<(&str, &MailState)> = g
+        .members
+        .iter()
+        .filter(|m| !m.email.is_empty())
+        .map(|m| (m.name.as_str(), &m.mail))
+        .chain((!g.host_email.is_empty()).then_some((g.host.as_str(), &g.host_mail)))
+        .collect();
+    if people.is_empty() {
+        return html! {};
+    }
+    let count = |f: fn(&MailState) -> bool| people.iter().filter(|(_, s)| f(s)).count();
+    let sent = count(|s| *s == MailState::Sent);
+    let waiting = count(|s| matches!(s, MailState::Pending | MailState::Sending));
+    let failed: Vec<(&str, &str)> = people
+        .iter()
+        .filter_map(|(n, s)| match s {
+            MailState::Failed(why) => Some((*n, why.as_str())),
+            _ => None,
+        })
+        .collect();
+    html! {
+        section.panel #mail {
+            h2 { "Emails" }
+            p.muted {
+                (sent) " sent"
+                @if waiting > 0 { " · " (waiting) " sending" }
+                @if !failed.is_empty() { " · " (failed.len()) " failed" }
+            }
+            @if !failed.is_empty() {
+                div.problem role="alert" {
+                    (icon(WARN))
+                    span {
+                        strong { "Some emails didn’t go out" }
+                        @for (name, why) in &failed {
+                            span.mailerr { (name) ": " (why) }
+                        }
+                    }
+                }
+                form method="post" action=(format!("{admin_path}/resend")) {
+                    button.btn type="submit" { "Resend failed emails" }
+                }
+            }
+        }
+    }
+}
+
 fn deleted_page() -> Markup {
     layout(
         "Group deleted · Kringle",
@@ -1888,7 +2260,13 @@ fn deleted_page() -> Markup {
     )
 }
 
-fn join_page(g: &Group, returning: Option<&Member>, f: &JoinForm, error: Option<&str>) -> Markup {
+fn join_page(
+    g: &Group,
+    returning: Option<&Member>,
+    f: &JoinForm,
+    error: Option<&str>,
+    ask_email: bool,
+) -> Markup {
     let n = g.members.len();
     layout(
         &format!("Join {} · Kringle", g.name),
@@ -1924,6 +2302,17 @@ fn join_page(g: &Group, returning: Option<&Member>, f: &JoinForm, error: Option<
                         "Your name"
                         input type="text" name="name" maxlength=(NAME_MAX) required placeholder="Priya" autocomplete="given-name" value=(f.name);
                         span.hint { "Use the name the group knows you by. The host uses it to set “keep apart” rules." }
+                    }
+                    @if ask_email {
+                        label.field {
+                            @if g.require_email {
+                                "Your email"
+                            } @else {
+                                span.row { "Your email" span.hint { "optional" } }
+                            }
+                            input type="email" name="email" maxlength="254" required[g.require_email] placeholder="priya@example.com" autocomplete="email" value=(f.email);
+                            span.hint { "We email you your personal link, and again when names are drawn. Only you get these emails." }
+                        }
                     }
                     label.field {
                         span.row { "Wishes & hints" span.hint { "optional" } }
@@ -2116,12 +2505,18 @@ mod tests {
     use super::*;
 
     fn test_app() -> (Shared, PathBuf) {
+        test_app_with(None)
+    }
+
+    fn test_app_with(mail: Option<mail::Transport>) -> (Shared, PathBuf) {
         let path = std::env::temp_dir().join(format!("kringle-test-{}.json", token()));
         let app = Arc::new(App {
             store: Mutex::new(Store::load(path.clone()).unwrap()),
             public_url: Some("http://kringle.test".into()),
             keep_secs: 86_400,
             limiter: Mutex::new(HashMap::new()),
+            mail,
+            mail_wake: tokio::sync::Notify::new(),
         });
         (app, path)
     }
@@ -2681,9 +3076,11 @@ mod tests {
                     host,
                     opened: false,
                     gives_to: None,
+                    ..Default::default()
                 })
                 .collect(),
             rules: Vec::new(),
+            ..Default::default()
         };
         let day = 86_400;
         let t = 1_000 * day;
@@ -2772,5 +3169,442 @@ mod tests {
         assert_eq!(clean_text("a\r\nb  \r\n\r\n", 600), "a\nb");
         assert_eq!(token().len(), 26);
         assert!(invite_token().split('-').count() == 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Email
+    // -----------------------------------------------------------------------
+
+    fn log_mail() -> Option<mail::Transport> {
+        Some(mail::Transport::Log(Default::default()))
+    }
+
+    /// Everything the log transport has "sent" so far, and forget it.
+    fn outbox(r: &Shared) -> Vec<mail::Letter> {
+        match &r.mail {
+            Some(mail::Transport::Log(o)) => std::mem::take(&mut *o.lock().unwrap()),
+            _ => panic!("not a log transport"),
+        }
+    }
+
+    fn enc(s: &str) -> String {
+        form_urlencoded::byte_serialize(s.as_bytes()).collect()
+    }
+
+    #[tokio::test]
+    async fn required_emails_from_create_to_draw() {
+        let (r, path) = test_app_with(log_mail());
+
+        // The form offers emails, with "Require emails" on by default.
+        let res = get(&r, "/").await;
+        assert!(res.has("Your email") && res.has(r#"name="require_email" value="1" checked"#));
+
+        // Required: the host must give a valid one.
+        let res = post(
+            &r,
+            "/groups",
+            "group=Office&host=Rosa+Diaz&plays=1&require_email=1",
+        )
+        .await;
+        assert!(res.has("Add your email."), "{}", res.text());
+        let res = post(
+            &r,
+            "/groups",
+            "group=Office&host=Rosa&plays=1&require_email=1&email=rosa%40nowhere",
+        )
+        .await;
+        assert!(res.has("doesn’t look right"));
+
+        let (admin, invite) = start(
+            &r,
+            &format!(
+                "group=Office&host=Rosa+Diaz&plays=1&require_email=1&email={}&budget=25",
+                enc(" rosa@example.com ")
+            ),
+        )
+        .await;
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(sent.len(), 1, "only the host so far");
+        let host_mail = &sent[0];
+        assert_eq!(
+            (host_mail.to.as_str(), host_mail.to_name.as_str()),
+            ("rosa@example.com", "Rosa Diaz")
+        );
+        assert_eq!(host_mail.subject, "Your gift swap Office is ready");
+        assert!(host_mail.text.starts_with("Hi Rosa,"));
+        assert!(
+            host_mail
+                .text
+                .contains(&format!("http://kringle.test{admin}")),
+            "admin link"
+        );
+        assert!(
+            host_mail
+                .text
+                .contains(&format!("http://kringle.test{invite}")),
+            "invite link"
+        );
+        assert!(
+            host_mail.text.contains("http://kringle.test/p/"),
+            "her own page: she plays"
+        );
+
+        // Guests must give one too; the form says so.
+        let page = get(&r, &invite).await;
+        assert!(page.has(r#"name="email""#) && page.has("required"));
+        let res = post(&r, &invite, "name=Sam").await;
+        assert!(res.has("Add your email."));
+        let res = post(&r, &invite, "name=Sam&email=sam").await;
+        assert!(
+            res.has("doesn’t look right") && res.has(r#"value="Sam""#),
+            "keeps what they typed"
+        );
+
+        let sam = join(&r, &invite, "name=Sam&email=sam%40example.org").await;
+        let kim = join(&r, &invite, "name=Kim&email=kim%40tuta.com").await;
+        deliver(&r).await;
+        let sent = outbox(&r);
+        // Each guest gets their own link; the host gets nothing when people join.
+        assert_eq!(
+            sent.iter().map(|l| l.to.as_str()).collect::<Vec<_>>(),
+            ["sam@example.org", "kim@tuta.com"]
+        );
+        assert_eq!(sent[0].subject, "You’re in Office");
+        assert!(sent[0].text.contains(&format!("http://kringle.test{sam}")));
+        assert!(sent[1].text.contains(&format!("http://kringle.test{kim}")));
+        assert!(
+            !sent[0].text.contains(&admin),
+            "guests never see the admin link"
+        );
+
+        // The host sees how emails went, never the addresses.
+        let page = get(&r, &admin).await;
+        assert!(page.has("3 sent"), "{}", page.text());
+        assert!(!page.has("sam@example.org") && !page.has("Resend"));
+
+        // Drawing names emails everyone a link to unwrap their tag.
+        post(&r, &format!("{admin}/draw"), "").await;
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(sent.len(), 3);
+        for l in &sent {
+            assert_eq!(l.subject, "Names are drawn for Office");
+            assert!(l.text.contains("Unwrap your gift tag") && l.text.contains("$25"));
+        }
+        let to_sam = sent.iter().find(|l| l.to == "sam@example.org").unwrap();
+        assert!(to_sam.text.contains(&format!("http://kringle.test{sam}")));
+        // The link works and shows the tag.
+        assert!(get(&r, &sam).await.has("Unwrap"));
+
+        // Nothing is left over, and the status survives a restart.
+        deliver(&r).await;
+        assert!(outbox(&r).is_empty());
+        let saved = Store::load(path.clone()).unwrap();
+        assert!(
+            saved.data.groups[0]
+                .members
+                .iter()
+                .all(|m| m.mail == MailState::Sent)
+        );
+        assert!(saved.data.groups[0].require_email);
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn optional_emails_and_a_host_who_does_not_play() {
+        let (r, path) = test_app_with(log_mail());
+        // "Require emails" unticked: the host gives one anyway, guests may not.
+        let (admin, invite) = start(&r, "group=Club&host=Ann&email=ann%40example.com").await;
+        let page = get(&r, &invite).await;
+        assert!(
+            page.has("optional")
+                && !page.has(r#"type="email" name="email" maxlength="254" required"#)
+        );
+        join(&r, &invite, "name=Bo").await;
+        join(&r, &invite, "name=Cy&email=cy%40example.com").await;
+        join(&r, &invite, "name=Di").await;
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(
+            sent.iter().map(|l| l.to.as_str()).collect::<Vec<_>>(),
+            ["ann@example.com", "cy@example.com"]
+        );
+        assert!(
+            sent[0].text.contains(&admin) && !sent[0].text.contains("/p/"),
+            "admin link, no own page"
+        );
+
+        // At the draw only people in it get an email.
+        post(&r, &format!("{admin}/draw"), "").await;
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(
+            sent.iter().map(|l| l.to.as_str()).collect::<Vec<_>>(),
+            ["cy@example.com"]
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn without_email_settings_no_email_is_asked_for() {
+        let (r, path) = test_app();
+        assert!(!get(&r, "/").await.has("Your email"));
+        // Even if a form sends it, nothing is required or kept.
+        let (admin, invite) = start(&r, "group=G&host=H&plays=1&require_email=1").await;
+        assert!(!get(&r, &invite).await.has(r#"name="email""#));
+        join(&r, &invite, "name=A&email=a%40example.com").await;
+        {
+            let st = lock(&r);
+            let g = &st.data.groups[0];
+            assert!(!g.require_email && g.members.iter().all(|m| m.email.is_empty()));
+        }
+        assert!(!get(&r, &admin).await.has("Emails"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn groups_saved_before_emails_still_load() {
+        let path = std::env::temp_dir().join(format!("kringle-test-{}.json", token()));
+        fs::write(
+            &path,
+            r#"{"groups":[{"name":"Old","host":"H","budget":"","admin":"a","invite":"i","created":1,"drawn":null,"next_id":2,
+                "members":[{"id":1,"name":"H","wishes":"","token":"t","host":true,"opened":false,"gives_to":null}],"rules":[]}]}"#,
+        )
+        .unwrap();
+        let st = Store::load(path.clone()).unwrap();
+        let g = &st.data.groups[0];
+        assert!(!g.require_email, "old groups don't suddenly require emails");
+        assert_eq!(g.members[0].mail, MailState::None);
+        let _ = fs::remove_file(path);
+    }
+
+    /// A tiny SMTP server: accepts mail, except that while `reject` is set it
+    /// refuses every recipient the way a real server refuses a bad mailbox.
+    async fn fake_smtp(
+        reject: Arc<std::sync::atomic::AtomicBool>,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
+        use std::sync::atomic::Ordering;
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let inbox = got.clone();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let (read, mut write) = stream.into_split();
+                let mut lines = BufReader::new(read).lines();
+                write.write_all(b"220 fake ESMTP\r\n").await.unwrap();
+                let mut data: Option<String> = None;
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if let Some(body) = &mut data {
+                        if line == "." {
+                            inbox.lock().unwrap().push(data.take().unwrap());
+                            write.write_all(b"250 queued\r\n").await.unwrap();
+                        } else {
+                            body.push_str(&line);
+                            body.push('\n');
+                        }
+                        continue;
+                    }
+                    let verb = line.get(..4).unwrap_or("").to_ascii_uppercase();
+                    let reply: &[u8] = match verb.as_str() {
+                        "RCPT" if reject.load(Ordering::SeqCst) => {
+                            b"550 5.1.1 No such mailbox here\r\n"
+                        }
+                        "DATA" => {
+                            data = Some(String::new());
+                            b"354 go ahead\r\n"
+                        }
+                        "QUIT" => {
+                            let _ = write.write_all(b"221 bye\r\n").await;
+                            break;
+                        }
+                        _ => b"250 ok\r\n",
+                    };
+                    write.write_all(reply).await.unwrap();
+                }
+            }
+        });
+        (port, got)
+    }
+
+    #[tokio::test]
+    async fn a_failed_email_is_explained_and_can_be_resent_over_smtp() {
+        let reject = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (port, inbox) = fake_smtp(reject.clone()).await;
+        let vars = HashMap::from([
+            ("KRINGLE_MAIL", "smtp".to_string()),
+            ("KRINGLE_SMTP_HOST", "127.0.0.1".into()),
+            ("KRINGLE_SMTP_PORT", port.to_string()),
+            ("KRINGLE_SMTP_SECURITY", "none".into()),
+            ("KRINGLE_MAIL_FROM", "kringle@example.com".into()),
+        ]);
+        let transport = mail::Transport::from_vars(|k| vars.get(k).cloned()).unwrap();
+        let (r, path) = test_app_with(transport);
+
+        let (admin, invite) = start(
+            &r,
+            "group=Team&host=Jo&plays=1&require_email=1&email=jo%40example.com",
+        )
+        .await;
+        join(&r, &invite, "name=Lu&email=lu%40example.com").await;
+        deliver(&r).await;
+
+        // The host sees who missed out and why, and the log says the same.
+        let page = get(&r, &admin).await;
+        assert!(
+            page.has("Some emails didn’t go out") && page.has("2 failed"),
+            "{}",
+            page.text()
+        );
+        assert!(
+            page.has("Jo: SMTP") && page.has("No such mailbox here"),
+            "{}",
+            page.text()
+        );
+        assert!(inbox.lock().unwrap().is_empty());
+
+        // Fixed on the server's side: resending gets them out.
+        reject.store(false, std::sync::atomic::Ordering::SeqCst);
+        let res = post(&r, &format!("{admin}/resend"), "").await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER);
+        deliver(&r).await;
+        let page = get(&r, &admin).await;
+        assert!(page.has("2 sent") && !page.has("failed"), "{}", page.text());
+        let got = inbox.lock().unwrap().clone();
+        assert_eq!(got.len(), 2);
+        assert!(
+            got[0].contains("Subject: Your gift swap Team is ready"),
+            "{}",
+            got[0]
+        );
+        assert!(
+            got[0].contains("To: Jo <jo@example.com>")
+                && got[0].contains("From: Kringle <kringle@example.com>")
+        );
+        assert!(got[1].contains("To: Lu <lu@example.com>"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn email_settings_are_checked_at_startup() {
+        let check = |pairs: &[(&str, &str)]| {
+            let vars: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            mail::Transport::from_vars(|k| vars.get(k).cloned()).map(|t| t.map(|t| t.describe()))
+        };
+        assert_eq!(check(&[]), Ok(None), "off unless asked for");
+        assert_eq!(check(&[("KRINGLE_MAIL", "off")]), Ok(None));
+        assert_eq!(
+            check(&[("KRINGLE_MAIL", "smtp")]),
+            Err("KRINGLE_SMTP_HOST is not set".into())
+        );
+        assert!(
+            check(&[
+                ("KRINGLE_MAIL", "smtp"),
+                ("KRINGLE_SMTP_HOST", "h"),
+                ("KRINGLE_SMTP_SECURITY", "ssl")
+            ])
+            .unwrap_err()
+            .contains("tls, starttls or none")
+        );
+        assert!(
+            check(&[("KRINGLE_MAIL", "smtp"), ("KRINGLE_SMTP_HOST", "h")])
+                .unwrap_err()
+                .contains("KRINGLE_MAIL_FROM")
+        );
+        assert_eq!(
+            check(&[
+                ("KRINGLE_MAIL", "smtp"),
+                ("KRINGLE_SMTP_HOST", "smtp.example.com"),
+                ("KRINGLE_SMTP_USER", "me@example.com")
+            ]),
+            Err("KRINGLE_SMTP_PASSWORD is not set".into()),
+        );
+        assert_eq!(
+            check(&[
+                ("KRINGLE_MAIL", "smtp"),
+                ("KRINGLE_SMTP_HOST", "smtp.example.com"),
+                ("KRINGLE_SMTP_USER", "me@example.com"),
+                ("KRINGLE_SMTP_PASSWORD", "pw"),
+            ]),
+            Ok(Some(
+                "SMTP via smtp.example.com:465 (tls) as me@example.com".into()
+            )),
+            "implicit TLS on 465 by default, sending as the login"
+        );
+        assert_eq!(
+            check(&[
+                ("KRINGLE_MAIL", "smtp"),
+                ("KRINGLE_SMTP_HOST", "h"),
+                ("KRINGLE_SMTP_SECURITY", "starttls"),
+                ("KRINGLE_MAIL_FROM", "a@b.c")
+            ]),
+            Ok(Some("SMTP via h:587 (starttls) as a@b.c".into())),
+        );
+        assert!(
+            check(&[
+                ("KRINGLE_MAIL", "smtp"),
+                ("KRINGLE_SMTP_HOST", "h"),
+                ("KRINGLE_SMTP_PORT", "x"),
+                ("KRINGLE_MAIL_FROM", "a@b.c")
+            ])
+            .unwrap_err()
+            .contains("port number")
+        );
+        assert_eq!(
+            check(&[
+                ("KRINGLE_MAIL", "tuta"),
+                ("KRINGLE_TUTA_USER", "k@tuta.com")
+            ]),
+            Err("KRINGLE_TUTA_PASSWORD is not set".into())
+        );
+        assert_eq!(
+            check(&[
+                ("KRINGLE_MAIL", "tuta"),
+                ("KRINGLE_TUTA_USER", "k@tuta.com"),
+                ("KRINGLE_TUTA_PASSWORD", "pw")
+            ]),
+            Ok(Some("Tuta as k@tuta.com".into()))
+        );
+        assert!(
+            check(&[("KRINGLE_MAIL", "gmail")])
+                .unwrap_err()
+                .contains("off, smtp, tuta or log")
+        );
+    }
+
+    #[test]
+    fn tuta_mail_bodies_are_escaped_html_with_links() {
+        assert_eq!(
+            mail::html("Hi <b>Al</b> & co,\nline two\n\nhttps://x.test/p/abc?q=1&r=2"),
+            "<p>Hi &lt;b&gt;Al&lt;/b&gt; &amp; co,<br>line two</p><p><a href=\"https://x.test/p/abc?q=1&amp;r=2\">https://x.test/p/abc?q=1&amp;r=2</a></p>"
+        );
+    }
+
+    #[test]
+    fn email_addresses_are_checked_for_typos() {
+        assert_eq!(
+            mail::clean_address("  a.b+c@mail.example.org "),
+            Some("a.b+c@mail.example.org".into())
+        );
+        for bad in [
+            "",
+            "a",
+            "a@b",
+            "@b.c",
+            "a@.b",
+            "a@b.",
+            "a b@c.d",
+            "a@b@c.d",
+            "a@b.c\r\nBcc: x@y.z",
+            "<a@b.c>",
+        ] {
+            assert_eq!(mail::clean_address(bad), None, "{bad:?}");
+        }
     }
 }

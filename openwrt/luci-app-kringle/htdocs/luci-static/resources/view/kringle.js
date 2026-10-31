@@ -32,8 +32,10 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'main', 'kringle', _('Settings'));
 		s.addremove = false;
+		s.tab('general', _('General'));
+		s.tab('email', _('Email'));
 
-		o = s.option(form.DummyValue, '_status', _('Status'));
+		o = s.taboption('general', form.DummyValue, '_status', _('Status'));
 		o.rawhtml = true;
 		o.cfgvalue = function() {
 			var port = parseInt(uci.get('kringle', 'main', 'port'), 10) || 8787;
@@ -43,22 +45,22 @@ return view.extend({
 			return '<strong>' + _('Running') + '</strong> &middot; <a href="' + url + '" target="_blank" rel="noreferrer">' + _('Open Kringle') + '</a>';
 		};
 
-		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o = s.taboption('general', form.Flag, 'enabled', _('Enabled'));
 		o.default = '1';
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'port', _('Port'),
+		o = s.taboption('general', form.Value, 'port', _('Port'),
 			_('TCP port Kringle listens on. To let people outside your network in, allow this port with a rule under Network › Firewall › Traffic Rules (not Port Forwards).'));
 		o.datatype = 'port';
 		o.placeholder = '8787';
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'listen', _('Listen on'));
+		o = s.taboption('general', form.ListValue, 'listen', _('Listen on'));
 		o.value('all', _('All interfaces'));
 		o.value('lan', _('LAN only'));
 		o.default = 'all';
 
-		o = s.option(form.Value, 'public_url', _('Public address'),
+		o = s.taboption('general', form.Value, 'public_url', _('Public address'),
 			_('The address used in the invite and personal links Kringle hands out, for example <code>http://gifts.example.com:8787</code>. Set it when you forward a port so the links work from outside. Leave empty to use whatever address each browser used.'));
 		o.placeholder = 'http://gifts.example.com:8787';
 		o.validate = function(section_id, value) {
@@ -67,18 +69,77 @@ return view.extend({
 			return /^https?:\/\/[^\s\/?#]+\/?$/.test(value) ? true : _('Use http:// or https:// followed by a host name and optional port, with no path.');
 		};
 
-		o = s.option(form.Value, 'keep_days', _('Delete groups after (days)'),
+		o = s.taboption('general', form.Value, 'keep_days', _('Delete groups after (days)'),
 			_('Groups and everyone’s wishes are deleted this many days after the group was created.'));
 		o.datatype = 'range(1,3650)';
 		o.placeholder = '120';
 
-		o = s.option(form.Value, 'data_dir', _('Data folder'),
+		o = s.taboption('general', form.Value, 'data_dir', _('Data folder'),
 			_('Where the data file is kept. Must be on persistent storage, not /tmp. It is kept across firmware upgrades if left at the default.'));
 		o.placeholder = '/etc/kringle';
 		o.validate = function(section_id, value) {
 			if (!value || /^\/[^\s]*$/.test(value))
 				return true;
 			return _('Use an absolute path such as /etc/kringle.');
+		};
+
+		o = s.taboption('email', form.ListValue, 'mail', _('Send email'),
+			_('Kringle emails each person their own link when they join and again when names are drawn, and emails the host their admin link. The host never gets an email when someone joins. Hosts can turn “Require emails” off for their group.'));
+		o.value('', _('Off'));
+		o.value('smtp', _('With an SMTP server'));
+		o.value('tuta', _('From a Tuta account'));
+		o.value('log', _('Write emails to the system log (for testing)'));
+
+		o = s.taboption('email', form.Value, 'mail_from_name', _('Sender name'));
+		o.placeholder = 'Kringle';
+		o.depends('mail', 'smtp');
+		o.depends('mail', 'tuta');
+
+		o = s.taboption('email', form.Value, 'smtp_host', _('SMTP server'));
+		o.datatype = 'host';
+		o.placeholder = 'smtp.example.com';
+		o.depends('mail', 'smtp');
+
+		o = s.taboption('email', form.ListValue, 'smtp_security', _('Security'));
+		o.value('tls', _('TLS (usually port 465)'));
+		o.value('starttls', _('STARTTLS (usually port 587)'));
+		o.value('none', _('None (only for a server on this network)'));
+		o.default = 'tls';
+		o.depends('mail', 'smtp');
+
+		o = s.taboption('email', form.Value, 'smtp_port', _('Port'),
+			_('Leave empty for the usual port for the security setting.'));
+		o.datatype = 'port';
+		o.depends('mail', 'smtp');
+
+		o = s.taboption('email', form.Value, 'smtp_user', _('User name'),
+			_('Leave empty if the server doesn’t need a login.'));
+		o.depends('mail', 'smtp');
+
+		o = s.taboption('email', form.Value, 'smtp_password', _('Password'));
+		o.password = true;
+		o.depends('mail', 'smtp');
+
+		o = s.taboption('email', form.Value, 'mail_from', _('Sender address'),
+			_('Leave empty to send as the user name.'));
+		o.datatype = 'email';
+		o.placeholder = 'kringle@example.com';
+		o.depends('mail', 'smtp');
+
+		o = s.taboption('email', form.Value, 'tuta_user', _('Tuta address'),
+			_('Kringle signs in to this Tuta account and sends from it. Use an account without two-factor sign-in; a separate free account just for Kringle works well. Emails to other Tuta users are end-to-end encrypted.'));
+		o.datatype = 'email';
+		o.placeholder = 'kringle@tuta.com';
+		o.depends('mail', 'tuta');
+
+		o = s.taboption('email', form.Value, 'tuta_password', _('Tuta password'));
+		o.password = true;
+		o.depends('mail', 'tuta');
+
+		o = s.taboption('email', form.DummyValue, '_mail_help', ' ');
+		o.rawhtml = true;
+		o.cfgvalue = function() {
+			return _('If an email doesn’t go out, the host sees why on their page and can press “Resend failed emails”. The system log has the same reason: <code>logread -e kringle</code>. If Kringle won’t start after changing these settings, the log says which one is wrong.');
 		};
 
 		return m.render();

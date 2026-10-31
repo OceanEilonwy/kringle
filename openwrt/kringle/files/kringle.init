@@ -43,6 +43,17 @@ prepare_data_dir() {
 	return 0
 }
 
+# Pass the email settings that are set as KRINGLE_* environment variables
+# (in the environment, not on the command line, so passwords stay out of ps).
+mail_env() {
+	local opt val
+	for opt in mail mail_from_name smtp_host smtp_port smtp_security smtp_user smtp_password mail_from tuta_user tuta_password; do
+		config_get val main "$opt" ''
+		[ -n "$val" ] && procd_append_param env "KRINGLE_$(echo "$opt" | tr a-z A-Z)=$val"
+	done
+	return 0
+}
+
 start_service() {
 	local enabled port listen public_url keep_days data_dir addr
 
@@ -66,6 +77,7 @@ start_service() {
 	procd_open_instance
 	procd_set_param command "$PROG" --addr "$addr:$port" --data "$data_dir/kringle.json" --keep-days "$keep_days"
 	[ -n "$public_url" ] && procd_append_param command --public-url "$public_url"
+	mail_env
 	procd_set_param user "$RUN_AS"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1

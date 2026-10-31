@@ -1,5 +1,7 @@
 # GL.iNet Flint 2 (GL-MT6000) is an aarch64 Cortex-A53 running OpenWrt (musl).
-# Everything in the dependency tree is pure Rust, so rust-lld plus the musl
-# objects that ship with the rustup target are enough: no C cross-compiler.
+# Plain `cargo build --target aarch64-unknown-linux-musl` links with rust-lld
+# and the musl objects from the rustup target. The C in Tuta's SDK needs a C
+# cross compiler though, so scripts/build-openwrt.sh uses cargo-zigbuild,
+# which brings zig for both.
 [target.aarch64-unknown-linux-musl]
 linker = "rust-lld"

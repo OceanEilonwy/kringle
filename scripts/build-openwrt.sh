@@ -48,13 +48,22 @@ else
 fi
 
 # The router binary is built on nightly with the standard library rebuilt
-# without panic messages, Debug formatting or unwind tables: about 0.6 MB
-# instead of 1.1 MB. Tests and development use stable; set NIGHTLY to pick a
-# specific nightly.
+# without panic messages, Debug formatting or unwind tables. Tests and
+# development use stable; set NIGHTLY to pick a specific nightly.
+#
+# Tuta's SDK (for sending email from a Tuta account) brings some C: ring, the
+# post-quantum Kyber code and BLAKE3. cargo-zigbuild uses zig as the C cross
+# compiler and linker, so there's still no aarch64 toolchain to install:
+#   cargo install cargo-zigbuild --locked
+#   python3 -m pip install ziglang     (or any zig on PATH)
 NIGHTLY="${NIGHTLY:-nightly}"
+if ! cargo zigbuild --help >/dev/null 2>&1; then
+	echo "error: cargo-zigbuild is missing: cargo install cargo-zigbuild --locked" >&2
+	exit 1
+fi
 rustup toolchain install "$NIGHTLY" --profile minimal --component rust-src --target aarch64-unknown-linux-musl
 RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none -Cforce-unwind-tables=no" \
-	cargo "+$NIGHTLY" build --release --locked --target aarch64-unknown-linux-musl \
+	cargo "+$NIGHTLY" zigbuild --release --locked --target aarch64-unknown-linux-musl \
 	-Z build-std=std,panic_abort
 install -m 0755 target/aarch64-unknown-linux-musl/release/kringle openwrt/kringle/files/kringle
 

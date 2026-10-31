@@ -2,12 +2,12 @@
 #
 # The binary is cross-compiled with cargo (see scripts/build-openwrt.sh) and
 # dropped into files/ before the SDK runs: building Rust inside the SDK would
-# mean bootstrapping a whole Rust toolchain for a pure-Rust static binary.
+# mean bootstrapping a whole Rust toolchain for one static binary.
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=kringle
-PKG_VERSION:=0.1.3
+PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=GPL-3.0-or-later
@@ -26,8 +26,9 @@ endef
 
 define Package/kringle/description
   A small gift swap web app: a host starts a group, shares one invite link,
-  sets "keep apart" rules and draws names. No accounts. One static binary
-  with its data in a single JSON file.
+  sets "keep apart" rules and draws names. No accounts. Optional email
+  through an SMTP server or a Tuta account. One static binary with its data
+  in a single JSON file.
 endef
 
 define Package/kringle/conffiles
