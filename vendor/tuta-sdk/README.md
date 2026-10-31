@@ -16,9 +16,13 @@ Kept small so updating stays easy:
   recipient. Upstream's SDK can sign in and read mail but can't send; this
   follows the web client's `MailFacade.createDraft` and `sendDraft`
   (`src/applications/common/api/worker/facades/lazy/MailFacade.ts`).
+- `sdk/src/send_mail.rs` also adds `LoggedInSdk::delete_session`, which
+  signs the session out (the web client's `LoginFacade.deleteSession`), as
+  the SDK's own entity delete is still `todo!()`.
 - `sdk/src/lib.rs`: `LoggedInSdk` keeps the key loader, asymmetric crypto
-  facade and public key provider that `send_mail` needs, and declares the
-  module.
+  facade and public key provider that `send_mail` needs, and the access
+  token, REST client and base URL that `delete_session` needs, and declares
+  the module.
 - `sdk/src/crypto/asymmetric_crypto_facade.rs`: `PubEncSymKey` fields are
   `pub(crate)`.
 - `sdk/src/net/native_rest_client.rs`: the bundled Mozilla roots

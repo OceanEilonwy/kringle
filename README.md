@@ -111,6 +111,10 @@ Off by default. Turn it on in Services › Kringle › **Email** (or with the
   out, and for any that failed, who and why (the server's own words), with a
   **Resend failed emails** button. The same reason is in the system log
   (`logread -e kringle`).
+- Services › Kringle shows how many emails failed across all groups (counts
+  only, no names or reasons), and **Check sign-in** signs in to the SMTP
+  server or Tuta with the saved settings without sending anything. From a
+  shell: `/etc/init.d/kringle mail_check` and `/etc/init.d/kringle mail_status`.
 
 **SMTP:** any mail provider's SMTP server. TLS (port 465) is the default,
 STARTTLS (587) works too; certificates are checked against the Mozilla roots
@@ -121,6 +125,9 @@ own SDK and sends from it, like the Tuta app does. Mail to other Tuta
 addresses is end-to-end encrypted; mail to anyone else is delivered normally
 by Tuta. Use an account without two-factor sign-in (a separate free account
 just for Kringle is a good idea; free accounts have sending limits).
+Kringle keeps one session while it runs. If Tuta ends it, the next email
+signs in again and is retried once, and Kringle signs the session out when
+it stops, so sessions don't pile up in the account.
 
 | Setting          | UCI option       | Env                      | Default               |
 |------------------|------------------|--------------------------|-----------------------|
@@ -288,6 +295,10 @@ The binary also runs on its own:
 | `--data`       | `KRINGLE_DATA`       | `./kringle.json`           |
 | `--public-url` | `KRINGLE_PUBLIC_URL` | the host the browser used  |
 | `--keep-days`  | `KRINGLE_KEEP_DAYS`  | `120`                      |
+
+`kringle --check-mail` signs in with the email settings and exits (status 1
+on failure, with the reason). `kringle --mail-status --data FILE` prints email
+counts as JSON.
 
 Groups are deleted `--keep-days` after they were created. Groups nobody but
 the host joined are deleted after a week. Hosts can also delete their group

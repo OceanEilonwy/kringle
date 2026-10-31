@@ -34,6 +34,27 @@ it simple, make failures easy to diagnose, and give the host a resend button.
   Tuta's client version 365.261030.0. When Tuta stops accepting it, refresh
   the vendor copy (steps in its README).
 
+- **Staying signed in.** (Added after asking.) If Tuta refuses the session
+  (401 or 440: expired or signed out elsewhere), Kringle signs in again and
+  retries that email once, so an expired session doesn't cost an email or
+  need a resend. Other failures aren't retried. Kringle signs the session
+  out when it stops (3-second limit), so restarts don't leave sessions
+  behind. The SDK's entity delete is `todo!()`, so signing out is a direct
+  `DELETE /rest/sys/session/…`, as the web client does.
+
+## LuCI: status and sign-in check
+
+- **No new network endpoint.** LuCI runs `/etc/init.d/kringle mail_status`
+  and `mail_check` through rpcd (allowed in the ACL; the check needs write
+  access). They run the binary with `--mail-status` (reads the data file)
+  and `--check-mail` (signs in with the saved settings, then signs out).
+- The page shows **counts only**: failed emails and how many groups they're
+  in, on the General tab's status line when any failed, and on the Email
+  tab. Names and reasons stay on each host's page.
+- **Check sign-in** uses the saved settings, so changes need Save & Apply
+  first (the button says so). It gives up after 20 seconds. For SMTP it
+  connects and logs in; for Tuta it signs in and out again.
+
 ## SMTP
 
 - **lettre** (0.11.23) over **rustls with ring and the bundled Mozilla

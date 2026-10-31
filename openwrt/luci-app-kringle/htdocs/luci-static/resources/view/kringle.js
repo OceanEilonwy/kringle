@@ -3,6 +3,8 @@
 'require form';
 'require rpc';
 'require uci';
+'require fs';
+'require ui';
 
 var callServiceList = rpc.declare({
 	object: 'service',
@@ -18,13 +20,36 @@ function isRunning() {
 	});
 }
 
+// Email counts across all groups ({sent, waiting, failed,
+// groups_with_failures}), or null. Counts only: who and why are on each
+// host's own page.
+function mailStatus() {
+	return L.resolveDefault(fs.exec('/etc/init.d/kringle', [ 'mail_status' ]), null).then(function(res) {
+		try { return (res && res.code == 0) ? JSON.parse(res.stdout) : null; }
+		catch (e) { return null; }
+	});
+}
+
+function mailSummary(st) {
+	if (!st)
+		return null;
+	if (st.failed > 0)
+		return '<strong style="color:var(--error-color-medium,#c00)">' +
+			_('%d email(s) failed to send, in %d group(s).').format(st.failed, st.groups_with_failures) +
+			'</strong> ' + _('Hosts see who and why on their group page and can resend from there. Check the settings below, or the system log: <code>logread -e kringle</code>.');
+	if (st.waiting > 0)
+		return _('%d sent, %d waiting to send.').format(st.sent, st.waiting);
+	return _('%d sent, none failed.').format(st.sent);
+}
+
 return view.extend({
 	load: function() {
-		return Promise.all([ uci.load('kringle'), isRunning() ]);
+		return Promise.all([ uci.load('kringle'), isRunning(), mailStatus() ]);
 	},
 
 	render: function(data) {
 		var running = data[1];
+		var mail = data[2];
 		var m, s, o;
 
 		m = new form.Map('kringle', _('Kringle'),
@@ -42,7 +67,10 @@ return view.extend({
 			var url = 'http://' + window.location.hostname + ':' + port + '/';
 			if (!running)
 				return '<em>' + _('Not running') + '</em>';
-			return '<strong>' + _('Running') + '</strong> &middot; <a href="' + url + '" target="_blank" rel="noreferrer">' + _('Open Kringle') + '</a>';
+			var html = '<strong>' + _('Running') + '</strong> &middot; <a href="' + url + '" target="_blank" rel="noreferrer">' + _('Open Kringle') + '</a>';
+			if (mail && mail.failed > 0)
+				html += '<br>' + mailSummary(mail);
+			return html;
 		};
 
 		o = s.taboption('general', form.Flag, 'enabled', _('Enabled'));
@@ -89,6 +117,34 @@ return view.extend({
 		o.value('smtp', _('With an SMTP server'));
 		o.value('tuta', _('From a Tuta account'));
 		o.value('log', _('Write emails to the system log (for testing)'));
+
+		o = s.taboption('email', form.DummyValue, '_mail_status', _('Emails so far'));
+		o.rawhtml = true;
+		o.cfgvalue = function() {
+			return mailSummary(mail) || '<em>' + _('Nothing sent yet.') + '</em>';
+		};
+		o.depends('mail', 'smtp');
+		o.depends('mail', 'tuta');
+		o.depends('mail', 'log');
+
+		o = s.taboption('email', form.Button, '_mail_check', _('Check sign-in'),
+			_('Signs in to the SMTP server or Tuta with the <strong>saved</strong> settings, without sending anything. Save & Apply changes first.'));
+		o.inputtitle = _('Check sign-in');
+		o.inputstyle = 'action';
+		o.depends('mail', 'smtp');
+		o.depends('mail', 'tuta');
+		o.onclick = function(ev) {
+			var btn = ev.currentTarget;
+			btn.disabled = true;
+			return fs.exec('/etc/init.d/kringle', [ 'mail_check' ]).then(function(res) {
+				var text = ((res.stdout || '') + (res.stderr || '')).trim() || _('No answer.');
+				ui.addNotification(null, E('p', text), res.code == 0 ? 'info' : 'danger');
+			}).catch(function(e) {
+				ui.addNotification(null, E('p', _('Couldn’t run the check: %s').format(e.message)), 'danger');
+			}).finally(function() {
+				btn.disabled = false;
+			});
+		};
 
 		o = s.taboption('email', form.Value, 'mail_from_name', _('Sender name'));
 		o.placeholder = 'Kringle';

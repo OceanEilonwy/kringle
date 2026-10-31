@@ -64,7 +64,17 @@ const TAG_NAME_FULL: usize = 14;
 // Config and entry point
 // ---------------------------------------------------------------------------
 
+#[derive(PartialEq)]
+enum Mode {
+    Serve,
+    /// Sign in to the mail server or Tuta once, report, and exit.
+    CheckMail,
+    /// Print email counts from the data file as JSON, and exit.
+    MailStatus,
+}
+
 struct Config {
+    mode: Mode,
     addr: String,
     data: PathBuf,
     public_url: Option<String>,
@@ -75,6 +85,9 @@ const USAGE: &str = "\
 kringle: a tiny Kris Kringle / Secret Santa gift swap server
 
 USAGE: kringle [--addr HOST:PORT] [--data FILE] [--public-url URL] [--keep-days N]
+       kringle --check-mail              sign in with the email settings, then exit
+       kringle --mail-status [--data FILE]
+                                         email counts as JSON (sent, waiting, failed)
 
   --addr        where to listen            (env KRINGLE_ADDR, default 0.0.0.0:8787)
   --data        JSON file for all groups   (env KRINGLE_DATA, default ./kringle.json)
@@ -91,6 +104,7 @@ fn usage() -> String {
 fn config() -> Config {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let mut cfg = Config {
+        mode: Mode::Serve,
         addr: env("KRINGLE_ADDR").unwrap_or_else(|| "0.0.0.0:8787".into()),
         data: env("KRINGLE_DATA")
             .unwrap_or_else(|| "kringle.json".into())
@@ -112,6 +126,8 @@ fn config() -> Config {
             "--addr" => cfg.addr = value("--addr"),
             "--data" => cfg.data = value("--data").into(),
             "--public-url" => cfg.public_url = Some(value("--public-url")),
+            "--check-mail" => cfg.mode = Mode::CheckMail,
+            "--mail-status" => cfg.mode = Mode::MailStatus,
             "--keep-days" => {
                 cfg.keep_days = value("--keep-days").parse().unwrap_or_else(|_| {
                     eprintln!("--keep-days needs a whole number");
@@ -139,10 +155,35 @@ fn config() -> Config {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cfg = config();
+    if cfg.mode == Mode::MailStatus {
+        let store = Store::load(cfg.data.clone()).unwrap_or_else(|e| {
+            eprintln!("kringle: can't read {}: {e}", cfg.data.display());
+            std::process::exit(1)
+        });
+        println!("{}", mail_status(&store.data));
+        return;
+    }
     let mail = mail::Transport::from_env().unwrap_or_else(|e| {
         eprintln!("kringle: email settings: {e}");
         std::process::exit(2)
     });
+    if cfg.mode == Mode::CheckMail {
+        let Some(mail) = mail else {
+            println!("Email is off.");
+            return;
+        };
+        let checked = tokio::time::timeout(CHECK_TIMEOUT, mail.check())
+            .await
+            .unwrap_or_else(|_| Err("No answer within 20 seconds.".into()));
+        match checked {
+            Ok(ok) => println!("{ok}"),
+            Err(why) => {
+                println!("{why}");
+                std::process::exit(1)
+            }
+        }
+        return;
+    }
     let mut store = Store::load(cfg.data.clone()).unwrap_or_else(|e| {
         eprintln!("kringle: can't read {}: {e}", cfg.data.display());
         std::process::exit(1)
@@ -179,7 +220,42 @@ async fn main() {
     });
     tokio::spawn(housekeeping(app.clone()));
     tokio::spawn(mail_worker(app.clone()));
-    serve(listener, app, shutdown()).await;
+    serve(listener, app.clone(), shutdown()).await;
+    if let Some(mail) = &app.mail {
+        let _ = tokio::time::timeout(Duration::from_secs(3), mail.close()).await;
+    }
+}
+
+/// `--check-mail` gives up after this (LuCI waits on it).
+const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Email counts across every group, for the LuCI page: no names, no
+/// addresses, no reasons.
+fn mail_status(data: &Data) -> String {
+    let (mut sent, mut waiting, mut failed, mut groups_with_failures) = (0, 0, 0, 0);
+    for g in &data.groups {
+        let mut group_failed = false;
+        let host = (!g.host_email.is_empty()).then_some(&g.host_mail);
+        for state in g.members.iter().map(|m| &m.mail).chain(host) {
+            match state {
+                MailState::None => {}
+                MailState::Pending | MailState::Sending => waiting += 1,
+                MailState::Sent => sent += 1,
+                MailState::Failed(_) => {
+                    failed += 1;
+                    group_failed = true;
+                }
+            }
+        }
+        groups_with_failures += group_failed as u32;
+    }
+    serde_json::json!({
+        "sent": sent,
+        "waiting": waiting,
+        "failed": failed,
+        "groups_with_failures": groups_with_failures,
+    })
+    .to_string()
 }
 
 /// Remove expired groups every hour, even when nobody is using the server.
@@ -3465,6 +3541,13 @@ mod tests {
             page.text()
         );
         assert!(inbox.lock().unwrap().is_empty());
+        // LuCI sees only counts.
+        let status = mail_status(&lock(&r).data);
+        assert_eq!(
+            status,
+            r#"{"failed":2,"groups_with_failures":1,"sent":0,"waiting":0}"#
+        );
+        assert!(!status.contains("Jo") && !status.contains("mailbox"));
 
         // Fixed on the server's side: resending gets them out.
         reject.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -3473,6 +3556,10 @@ mod tests {
         deliver(&r).await;
         let page = get(&r, &admin).await;
         assert!(page.has("2 sent") && !page.has("failed"), "{}", page.text());
+        assert_eq!(
+            mail_status(&lock(&r).data),
+            r#"{"failed":0,"groups_with_failures":0,"sent":2,"waiting":0}"#
+        );
         let got = inbox.lock().unwrap().clone();
         assert_eq!(got.len(), 2);
         assert!(
@@ -3606,5 +3693,97 @@ mod tests {
         ] {
             assert_eq!(mail::clean_address(bad), None, "{bad:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn an_expired_tuta_session_signs_in_again_once() {
+        use std::cell::Cell;
+        // Sessions are numbered by sign-in; `refuse` lists the sessions the
+        // fake server rejects as expired, `broken` makes every send fail
+        // for some other reason.
+        async fn run(
+            slot: &mut Option<u32>,
+            (sign_ins, sends): (&Cell<u32>, &Cell<u32>),
+            refuse: &[u32],
+            broken: bool,
+        ) -> Result<(), String> {
+            mail::with_session(
+                slot,
+                || async {
+                    sign_ins.set(sign_ins.get() + 1);
+                    Ok(sign_ins.get())
+                },
+                |session| async move {
+                    sends.set(sends.get() + 1);
+                    if refuse.contains(&session) {
+                        Err((true, format!("session {session} expired")))
+                    } else if broken {
+                        Err((false, "mailbox full".to_string()))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .await
+        }
+        let (sign_ins, sends) = (Cell::new(0), Cell::new(0));
+        let counters = (&sign_ins, &sends);
+        let mut slot = None;
+        // First email signs in; the next reuses the session.
+        assert_eq!(run(&mut slot, counters, &[], false).await, Ok(()));
+        assert_eq!(run(&mut slot, counters, &[], false).await, Ok(()));
+        assert_eq!((sign_ins.get(), sends.get(), slot), (1, 2, Some(1)));
+        // Session 1 expires: sign in again and the email still goes.
+        assert_eq!(run(&mut slot, counters, &[1], false).await, Ok(()));
+        assert_eq!((sign_ins.get(), sends.get(), slot), (2, 4, Some(2)));
+        // Refused again straight after signing in: give up, no loop.
+        assert_eq!(
+            run(&mut slot, counters, &[2, 3], false).await,
+            Err("session 3 expired".into())
+        );
+        assert_eq!((sign_ins.get(), sends.get(), slot), (3, 6, None));
+        // Any other failure isn't retried, but the session is dropped.
+        assert_eq!(
+            run(&mut slot, counters, &[], true).await,
+            Err("mailbox full".into())
+        );
+        assert_eq!((sign_ins.get(), sends.get(), slot), (4, 7, None));
+    }
+
+    #[tokio::test]
+    async fn checking_the_email_settings_signs_in_without_sending() {
+        let smtp = |port: u16| {
+            let vars = HashMap::from([
+                ("KRINGLE_MAIL", "smtp".to_string()),
+                ("KRINGLE_SMTP_HOST", "127.0.0.1".into()),
+                ("KRINGLE_SMTP_PORT", port.to_string()),
+                ("KRINGLE_SMTP_SECURITY", "none".into()),
+                ("KRINGLE_MAIL_FROM", "kringle@example.com".into()),
+            ]);
+            mail::Transport::from_vars(|k| vars.get(k).cloned())
+                .unwrap()
+                .unwrap()
+        };
+        let (port, inbox) = fake_smtp(Arc::new(false.into())).await;
+        let ok = smtp(port).check().await.unwrap();
+        assert!(
+            ok.starts_with("Connected and signed in: SMTP via 127.0.0.1"),
+            "{ok}"
+        );
+        assert!(inbox.lock().unwrap().is_empty(), "nothing sent");
+
+        // Nothing listening: the reason says so.
+        let closed = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let why = smtp(closed).check().await.unwrap_err();
+        assert!(
+            why.starts_with("SMTP: ") && why.to_lowercase().contains("refused"),
+            "{why}"
+        );
+
+        let log = log_mail().unwrap();
+        assert!(log.check().await.unwrap().contains("system log"));
     }
 }

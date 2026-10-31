@@ -5,6 +5,10 @@
 START=99
 USE_PROCD=1
 
+EXTRA_COMMANDS="mail_check mail_status"
+EXTRA_HELP="	mail_check	Sign in with the saved email settings, without sending anything
+	mail_status	Email counts (sent, waiting, failed) as JSON"
+
 PROG=/usr/bin/kringle
 # Created by the package (USERID in its Makefile).
 RUN_AS=kringle
@@ -43,15 +47,36 @@ prepare_data_dir() {
 	return 0
 }
 
+MAIL_OPTIONS="mail mail_from_name smtp_host smtp_port smtp_security smtp_user smtp_password mail_from tuta_user tuta_password"
+
 # Pass the email settings that are set as KRINGLE_* environment variables
 # (in the environment, not on the command line, so passwords stay out of ps).
 mail_env() {
 	local opt val
-	for opt in mail mail_from_name smtp_host smtp_port smtp_security smtp_user smtp_password mail_from tuta_user tuta_password; do
+	for opt in $MAIL_OPTIONS; do
 		config_get val main "$opt" ''
 		[ -n "$val" ] && procd_append_param env "KRINGLE_$(echo "$opt" | tr a-z A-Z)=$val"
 	done
 	return 0
+}
+
+# For the "Check sign-in" button in LuCI.
+mail_check() {
+	local opt val
+	config_load kringle
+	for opt in $MAIL_OPTIONS; do
+		config_get val main "$opt" ''
+		[ -n "$val" ] && export "KRINGLE_$(echo "$opt" | tr a-z A-Z)=$val"
+	done
+	"$PROG" --check-mail
+}
+
+# For the email summary in LuCI: counts only.
+mail_status() {
+	local data_dir
+	config_load kringle
+	config_get data_dir main data_dir /etc/kringle
+	"$PROG" --mail-status --data "$data_dir/kringle.json"
 }
 
 start_service() {

@@ -7,7 +7,7 @@
 //! a time by a single background task (see `deliver` in main.rs). A failure is
 //! logged and shown to the host with its reason, and the host can resend.
 
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use lettre::{
     AsyncSmtpTransport, AsyncTransport as _, Message, Tokio1Executor,
@@ -134,6 +134,29 @@ impl Transport {
         }
     }
 
+    /// Sign in to the SMTP server or Tuta without sending anything, for the
+    /// "Check sign-in" button in LuCI. `Ok` says what worked.
+    pub async fn check(&self) -> Result<String, String> {
+        match self {
+            Transport::Smtp {
+                relay, describe, ..
+            } => match relay.test_connection().await {
+                Ok(true) => Ok(format!("Connected and signed in: {describe}.")),
+                Ok(false) => Err(format!("Couldn't connect: {describe}.")),
+                Err(e) => Err(format!("SMTP: {}", smtp_reason(&e))),
+            },
+            Transport::Tuta(t) => t.check().await,
+            Transport::Log(_) => Ok("Emails are written to the system log, not sent.".into()),
+        }
+    }
+
+    /// Before stopping: sign out of Tuta.
+    pub async fn close(&self) {
+        if let Transport::Tuta(t) = self {
+            t.close().await;
+        }
+    }
+
     /// Send one letter. The error is a short reason for the log and the host.
     pub async fn send(&self, letter: &Letter) -> Result<(), String> {
         match self {
@@ -198,41 +221,108 @@ pub struct Tuta {
 
 const TUTA_API: &str = "https://app.tuta.com";
 
+type Sdk = Arc<tutasdk::LoggedInSdk>;
+
 impl Tuta {
+    async fn sign_in(&self) -> Result<Sdk, String> {
+        let rest = Arc::new(
+            tutasdk::net::native_rest_client::NativeRestClient::try_new()
+                .map_err(|e| format!("Tuta: {e}"))?,
+        );
+        let files = Arc::new(tutasdk::bindings::test_file_client::TestFileClient::default());
+        tutasdk::Sdk::new(TUTA_API.into(), rest, files)
+            .create_session(&self.user, &self.password)
+            .await
+            .map_err(|e| format!("Tuta sign-in as {} failed: {e}", self.user))
+    }
+
     async fn send(&self, letter: &Letter) -> Result<(), String> {
         let mut session = self.session.lock().await;
-        let sdk = match session.as_ref() {
-            Some(sdk) => sdk.clone(),
-            None => {
-                let rest = Arc::new(
-                    tutasdk::net::native_rest_client::NativeRestClient::try_new()
-                        .map_err(|e| format!("Tuta: {e}"))?,
-                );
-                let files =
-                    Arc::new(tutasdk::bindings::test_file_client::TestFileClient::default());
-                let sdk = tutasdk::Sdk::new(TUTA_API.into(), rest, files)
-                    .create_session(&self.user, &self.password)
+        let html = html(&letter.text);
+        with_session(
+            &mut session,
+            || self.sign_in(),
+            |sdk: Sdk| {
+                let html = html.clone();
+                async move {
+                    sdk.send_mail(
+                        &self.user,
+                        &self.from_name,
+                        &letter.to_name,
+                        &letter.to,
+                        &letter.subject,
+                        &html,
+                    )
                     .await
-                    .map_err(|e| format!("Tuta sign-in as {} failed: {e}", self.user))?;
-                *session = Some(sdk.clone());
-                sdk
+                    .map_err(|e| (signed_out(&e), format!("Tuta: {e}")))
+                }
+            },
+        )
+        .await
+    }
+
+    /// Sign in afresh and sign straight out again.
+    async fn check(&self) -> Result<String, String> {
+        let sdk = self.sign_in().await?;
+        let _ = sdk.delete_session().await;
+        Ok(format!("Signed in to Tuta as {}.", self.user))
+    }
+
+    /// Sign the kept session out, so sessions don't pile up in the account.
+    async fn close(&self) {
+        if let Some(sdk) = self.session.lock().await.take()
+            && let Err(e) = sdk.delete_session().await
+        {
+            eprintln!("kringle: signing out of Tuta failed: {e}");
+        }
+    }
+}
+
+/// Whether Tuta refused the session itself (expired or signed out
+/// elsewhere), so signing in again is worth one more try.
+fn signed_out(e: &tutasdk::SendMailError) -> bool {
+    use tutasdk::rest_error::HttpError::{NotAuthenticatedError, SessionExpiredError};
+    matches!(
+        e,
+        tutasdk::SendMailError::Api(tutasdk::ApiCallError::ServerResponseError {
+            source: NotAuthenticatedError | SessionExpiredError
+        })
+    )
+}
+
+/// Run `send` with the kept session, signing in first if there is none. Any
+/// failure drops the session. If the session itself was refused (`send`
+/// returns `(true, _)`), sign in again and try once more.
+pub async fn with_session<S, SignIn, Send>(
+    slot: &mut Option<S>,
+    sign_in: impl Fn() -> SignIn,
+    send: impl Fn(S) -> Send,
+) -> Result<(), String>
+where
+    S: Clone,
+    SignIn: Future<Output = Result<S, String>>,
+    Send: Future<Output = Result<(), (bool, String)>>,
+{
+    for attempt in 0..2 {
+        let session = match slot.clone() {
+            Some(s) => s,
+            None => {
+                let s = sign_in().await?;
+                *slot = Some(s.clone());
+                s
             }
         };
-        let result = sdk
-            .send_mail(
-                &self.user,
-                &self.from_name,
-                &letter.to_name,
-                &letter.to,
-                &letter.subject,
-                &html(&letter.text),
-            )
-            .await;
-        if result.is_err() {
-            *session = None;
+        match send(session).await {
+            Ok(()) => return Ok(()),
+            Err((refused, why)) => {
+                *slot = None;
+                if !(refused && attempt == 0) {
+                    return Err(why);
+                }
+            }
         }
-        result.map_err(|e| format!("Tuta: {e}"))
     }
+    unreachable!("the second attempt always returns")
 }
 
 /// Plain text as simple HTML (Tuta mail bodies are HTML): paragraphs, line

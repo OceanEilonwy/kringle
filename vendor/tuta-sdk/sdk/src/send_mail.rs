@@ -257,4 +257,50 @@ impl LoggedInSdk {
 			.await?;
 		Ok(())
 	}
+
+	/// Signs this session out on Tuta's servers (the web client's
+	/// `LoginFacade.deleteSession`), so sessions don't pile up in the
+	/// account. The SDK's own entity delete isn't implemented yet.
+	pub async fn delete_session(&self) -> Result<(), ApiCallError> {
+		use crate::bindings::rest_client::{HttpMethod, RestClientOptions};
+		use crate::services::generated::sys::SessionService;
+		use crate::services::Service;
+		use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+		use base64::Engine;
+
+		const GENERATED_ID_BYTES: usize = 9;
+		let token = URL_SAFE_NO_PAD
+			.decode(self.access_token.trim_end_matches('='))
+			.map_err(|e| ApiCallError::internal(format!("access token: {e}")))?;
+		if token.len() <= GENERATED_ID_BYTES {
+			return Err(ApiCallError::internal("access token too short".into()));
+		}
+		let list_id = crate::util::BASE64_EXT.encode(&token[..GENERATED_ID_BYTES]);
+		let element_id =
+			URL_SAFE_NO_PAD.encode(crate::crypto::sha256(&token[GENERATED_ID_BYTES..]));
+		let url = format!("{}/rest/sys/session/{list_id}/{element_id}", self.base_url);
+		let headers = std::collections::HashMap::from([
+			("accessToken".to_string(), self.access_token.clone()),
+			("v".to_string(), SessionService::VERSION.to_string()),
+			("cv".to_string(), crate::CLIENT_VERSION.to_string()),
+		]);
+		let response = self
+			.raw_rest_client
+			.request_binary(
+				url,
+				HttpMethod::DELETE,
+				RestClientOptions {
+					headers,
+					body: None,
+					suspension_behavior: None,
+				},
+			)
+			.await?;
+		match response.status {
+			200..=299 => Ok(()),
+			status => Err(HttpError::from_http_response(status, &response.headers)
+				.map(ApiCallError::from)
+				.unwrap_or_else(|e| e)),
+		}
+	}
 }
