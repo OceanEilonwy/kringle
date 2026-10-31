@@ -35,6 +35,14 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      # zig is the C cross compiler for the router build (Tuta's SDK has C).
+      - name: Install zig and cargo-zigbuild
+        run: |
+          python3 -m venv ~/zig
+          ~/zig/bin/pip install --quiet ziglang==0.17.0
+          echo ~/zig/bin >> "$GITHUB_PATH"
+          cargo install cargo-zigbuild --locked --version 0.23.4
+
       - name: Build packages and repository
         env:
           APK_SIGNING_KEY: ${{ secrets.APK_SIGNING_KEY }}

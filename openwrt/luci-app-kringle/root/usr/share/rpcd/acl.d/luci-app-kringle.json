@@ -5,9 +5,15 @@
 			"ubus": {
 				"service": [ "list" ]
 			},
+			"file": {
+				"/etc/init.d/kringle mail_status": [ "exec" ]
+			},
 			"uci": [ "kringle" ]
 		},
 		"write": {
+			"file": {
+				"/etc/init.d/kringle mail_check": [ "exec" ]
+			},
 			"uci": [ "kringle" ]
 		}
 	}

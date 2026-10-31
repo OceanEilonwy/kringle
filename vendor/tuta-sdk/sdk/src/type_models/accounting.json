@@ -1,0 +1,144 @@
+{
+	"79": {
+		"name": "CustomerAccountPosting",
+		"app": "accounting",
+		"version": 9,
+		"since": 3,
+		"type": "AGGREGATED_TYPE",
+		"id": 79,
+		"rootId": "CmFjY291bnRpbmcATw",
+		"versioned": false,
+		"encrypted": false,
+		"isPublic": true,
+		"targetTypeId": null,
+		"values": {
+			"80": {
+				"final": true,
+				"name": "_id",
+				"id": 80,
+				"type": "CustomId",
+				"cardinality": "One",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"81": {
+				"final": true,
+				"name": "type",
+				"id": 81,
+				"type": "Number",
+				"cardinality": "One",
+				"encrypted": true,
+				"transferredAttributeId": null
+			},
+			"82": {
+				"final": true,
+				"name": "valueDate",
+				"id": 82,
+				"type": "Date",
+				"cardinality": "One",
+				"encrypted": true,
+				"transferredAttributeId": null
+			},
+			"83": {
+				"final": true,
+				"name": "invoiceNumber",
+				"id": 83,
+				"type": "String",
+				"cardinality": "ZeroOrOne",
+				"encrypted": true,
+				"transferredAttributeId": null
+			},
+			"84": {
+				"final": true,
+				"name": "amount",
+				"id": 84,
+				"type": "Number",
+				"cardinality": "One",
+				"encrypted": true,
+				"transferredAttributeId": null
+			}
+		},
+		"associations": {}
+	},
+	"86": {
+		"name": "CustomerAccountReturn",
+		"app": "accounting",
+		"version": 9,
+		"since": 3,
+		"type": "DATA_TRANSFER_TYPE",
+		"id": 86,
+		"rootId": "CmFjY291bnRpbmcAVg",
+		"versioned": false,
+		"encrypted": true,
+		"isPublic": true,
+		"targetTypeId": null,
+		"values": {
+			"87": {
+				"final": false,
+				"name": "_format",
+				"id": 87,
+				"type": "Number",
+				"cardinality": "One",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"88": {
+				"final": true,
+				"name": "_ownerGroup",
+				"id": 88,
+				"type": "GeneratedId",
+				"cardinality": "ZeroOrOne",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"89": {
+				"final": true,
+				"name": "_ownerPublicEncSessionKey",
+				"id": 89,
+				"type": "Bytes",
+				"cardinality": "ZeroOrOne",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"92": {
+				"final": false,
+				"name": "outstandingBookingsPrice",
+				"id": 92,
+				"type": "Number",
+				"cardinality": "One",
+				"encrypted": false,
+				"transferredAttributeId": null
+			},
+			"94": {
+				"final": true,
+				"name": "balance",
+				"id": 94,
+				"type": "Number",
+				"cardinality": "One",
+				"encrypted": true,
+				"transferredAttributeId": null
+			},
+			"96": {
+				"final": true,
+				"name": "_publicCryptoProtocolVersion",
+				"id": 96,
+				"type": "Number",
+				"cardinality": "ZeroOrOne",
+				"encrypted": false,
+				"transferredAttributeId": null
+			}
+		},
+		"associations": {
+			"90": {
+				"final": false,
+				"name": "postings",
+				"id": 90,
+				"type": "AGGREGATION",
+				"cardinality": "Any",
+				"refTypeId": 79,
+				"dependency": null,
+				"transferredAttributeId": null
+			}
+		}
+	}
+}
