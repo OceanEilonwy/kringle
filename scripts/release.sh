@@ -3,7 +3,7 @@
 #
 # Runs in CI after every push to main. A version is released once: if its
 # tag (v0.1.1, ...) already exists this does nothing, so bump the version in
-# Cargo.toml (and openwrt/kringle/Makefile) to publish a new release.
+# Cargo.toml  to publish a new release.
 # Needs the gh CLI with a token that can write to the repository.
 #
 #   scripts/release.sh            publish
@@ -20,7 +20,6 @@ pages="${PAGES_URL:-https://$owner.github.io/${repo#*/}}"
 set -- dist/*.apk
 [ -e "$1" ] || { echo "no packages in dist/; run scripts/build-openwrt.sh first" >&2; exit 1; }
 server=$(basename "$(ls dist/kringle-*.apk)")
-luci=$(basename "$(ls dist/luci-app-kringle-*.apk)")
 
 notes=$(mktemp)
 trap 'rm -f "$notes"' EXIT
@@ -35,19 +34,18 @@ The packages are signed with the Kringle key. Trust it once, then install:
 
 **In LuCI**
 1. System › Administration › *Repo Public Keys*: paste \`$pages/kringle.pem\` and click **Add key**.
-2. System › Software › **Upload Package…**: upload \`$server\` first, then \`$luci\`.
+2. System › Software › **Upload Package…**: upload \`$server\`.
 3. Reload LuCI and open Services › Kringle.
 
 **In a terminal**
 \`\`\`sh
 wget -O /etc/apk/keys/kringle.pem $pages/kringle.pem
-apk add ./$server ./$luci
+apk add ./$server
 \`\`\`
 
 | File | What it is |
 |---|---|
-| \`$server\` | The Kringle server |
-| \`$luci\` | Its settings page in LuCI (Services › Kringle) |
+| \`$server\` | The Kringle server, with its settings page in LuCI (Services › Kringle) |
 | \`kringle.pem\` | The public key the packages are signed with |
 EOF
 

@@ -222,7 +222,7 @@ footer .panel{display:inline-block;padding:12px 20px;font-weight:400;color:var(-
           <li><span class="num">4</span><div>
             <h3>Install Kringle</h3>
             <p class="path">System <b>›</b> Software</p>
-            <p>Click <strong>Update lists…</strong> and wait for it to finish. Type <code>kringle</code> into the <em>Type to filter…</em> box, open the <em>Available</em> tab, and click <strong>Install…</strong> next to <strong>luci-app-kringle</strong>. Then confirm with <strong>Install</strong>. The Kringle server comes with it and starts straight away.</p>
+            <p>Click <strong>Update lists…</strong> and wait for it to finish. Type <code>kringle</code> into the <em>Type to filter…</em> box, open the <em>Available</em> tab, and click <strong>Install…</strong> next to <strong>kringle</strong>. Then confirm with <strong>Install</strong>. Services › Kringle appears in LuCI and the server starts straight away.</p>
           </div></li>
           <li><span class="num">5</span><div>
             <h3>Open Kringle</h3>
@@ -250,7 +250,7 @@ echo "@PAGES_URL@/@REPO_PATH@/packages.adb" &gt;&gt; /etc/apk/repositories.d/cus
             <h3>Install Kringle</h3>
             <p>This installs the server and its settings page in LuCI. It starts straight away.</p>
             <div class="cmd"><pre>apk update
-apk add luci-app-kringle</pre></div>
+apk add kringle</pre></div>
           </div></li>
           <li><span class="num">4</span><div>
             <h3>Open Kringle</h3>
@@ -286,13 +286,13 @@ service firewall reload</pre></div>
       <div class="panel">
         <h3>Updating</h3>
         <p><span class="path inline">System <b>›</b> Software</span>: click <strong>Update lists…</strong>, then look in the <em>Updates</em> tab. Or in a terminal:</p>
-        <div class="cmd"><pre>apk update &amp;&amp; apk upgrade kringle luci-app-kringle</pre></div>
+        <div class="cmd"><pre>apk update &amp;&amp; apk upgrade kringle</pre></div>
         <p class="muted small" style="margin-top:10px">Settings and gift swaps are kept. After a firmware upgrade, repeat the steps above to reinstall.</p>
       </div>
       <div class="panel">
         <h3>Removing</h3>
-        <p><span class="path inline">System <b>›</b> Software</span>: in the <em>Installed</em> tab, click <strong>Remove…</strong> on luci-app-kringle, then kringle. Or in a terminal:</p>
-        <div class="cmd"><pre>apk del luci-app-kringle kringle
+        <p><span class="path inline">System <b>›</b> Software</span>: in the <em>Installed</em> tab, click <strong>Remove…</strong> on kringle. Or in a terminal:</p>
+        <div class="cmd"><pre>apk del kringle
 rm -rf /etc/kringle   # also delete all gift swaps</pre></div>
       </div>
     </div>

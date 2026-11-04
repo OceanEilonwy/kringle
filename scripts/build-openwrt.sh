@@ -1,13 +1,13 @@
 #!/bin/sh
-# Build the kringle and luci-app-kringle packages (.apk) for OpenWrt 25.12 on
+# Build the kringle package (.apk, LuCI page included) for OpenWrt 25.12 on
 # the GL.iNet Flint 2 (mediatek/filogic, aarch64_cortex-a53), plus a signed
 # apk repository ready for GitHub Pages.
 #
 # The Rust binary is cross-compiled here with cargo; the official OpenWrt SDK
-# (in Docker) then packages it and the LuCI app and signs the repository index.
+# (in Docker) then packages it with the LuCI page and signs the repository index.
 #
 # Output:
-#   dist/*.apk   the two packages, for installing by hand
+#   dist/*.apk   the package, for installing by hand
 #   site/        the package repository and a page explaining how to add it
 #
 # Signing key (must match openwrt/keys/kringle.pem), first found wins:
@@ -94,18 +94,18 @@ APK_KEY="$key" docker run --rm -e APK_KEY "$@" "$SDK_IMAGE" sh -euc '
 
 	grep -q "^src-link kringle " feeds.conf.default || echo "src-link kringle /feed" >> feeds.conf.default
 	# Only the feeds the build needs; git.openwrt.org can drop connections, so retry.
-	for feed in base luci kringle; do
+	for feed in base kringle; do
 		for try in 1 2 3; do
 			./scripts/feeds update "$feed" && [ -d "feeds/$feed" ] && break
 			[ "$try" = 3 ] && { echo "feed $feed failed to download" >&2; exit 1; }
 			sleep 10
 		done
 	done
-	./scripts/feeds install kringle luci-app-kringle
+	./scripts/feeds install kringle
 	make defconfig
 	# Rebuild ours from scratch each time; drop earlier versions from the repository.
-	rm -rf bin/packages/*/kringle build_dir/target-*/kringle-* build_dir/target-*/luci-app-kringle*
-	make package/kringle/compile package/luci-app-kringle/compile -j"$(nproc)"
+	rm -rf bin/packages/*/kringle build_dir/target-*/kringle-*
+	make package/kringle/compile -j"$(nproc)"
 	# The SDK builds packages unsigned (only the index is signed). Sign them too,
 	# so a downloaded .apk installs directly (apk add, or LuCI Upload Package)
 	# on any router that trusts kringle.pem.
@@ -133,11 +133,7 @@ cp web/screenshots/*.webp site/assets/screenshots/
 cp web/gift.svg static/town.svg static/clouds.svg static/fonts/fell.woff2 static/fonts/fell-italic.woff2 site/assets/
 files=$(for f in "$repo"/*.apk; do
 	name=$(basename "$f")
-	case "$name" in
-		luci-app-*) what="the LuCI settings page" ;;
-		*) what="the Kringle server" ;;
-	esac
-	printf '        <li><a href="%s/%s">%s</a>: %s</li>\n' "$repo_path" "$name" "$name" "$what"
+	printf '        <li><a href="%s/%s">%s</a>: the Kringle server and its LuCI page</li>\n' "$repo_path" "$name" "$name"
 done)
 awk -v files="$files" -v key="$(cat "$PUBKEY")" '
 	$0 == "@FILES@" { printf "%s\n", files; next }

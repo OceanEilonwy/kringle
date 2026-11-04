@@ -45,7 +45,7 @@ package repository for OpenWrt 25.12 on `aarch64_cortex-a53` (Flint 2).
    `customfeeds.list` and click **Save**:
    `https://oceaneilonwy.github.io/kringle/openwrt/25.12/aarch64_cortex-a53/packages.adb`
 3. In System › Software, click **Update lists…**, filter for `kringle`, and
-   install **luci-app-kringle**. It pulls in `kringle`.
+   install **kringle**. It includes the LuCI page.
 4. Reload LuCI and go to Services › Kringle.
 
 **Or over SSH:**
@@ -54,21 +54,24 @@ package repository for OpenWrt 25.12 on `aarch64_cortex-a53` (Flint 2).
 wget -O /etc/apk/keys/kringle.pem https://oceaneilonwy.github.io/kringle/kringle.pem
 echo "https://oceaneilonwy.github.io/kringle/openwrt/25.12/aarch64_cortex-a53/packages.adb" >> /etc/apk/repositories.d/customfeeds.list
 apk update
-apk add luci-app-kringle        # pulls in kringle
+apk add kringle
 ```
 
 Services › Kringle shows whether it's running and links to it, which is
 `http://192.168.1.1:8787` by default. If it says *Not running*, tick
 *Enabled* and Save & Apply.
 
-**Or download the packages** from the
+**Or download the package** from the
 [Releases page](https://github.com/OceanEilonwy/kringle/releases). They're
 signed with the same key, so once `kringle.pem` is trusted (step 1 above) they
-install with System › Software › **Upload Package…** (the server first, then
-the LuCI app) or `apk add ./kringle-*.apk ./luci-app-kringle-*.apk`.
+install with System › Software › **Upload Package…** or `apk add ./kringle-*.apk`.
+
+*Upgrading from 0.2.0 or earlier,* when the LuCI page was a separate package:
+remove it first with `apk del luci-app-kringle`, then install `kringle`
+(settings and data are kept).
 
 To update, click **Update lists…** in System › Software and check the
-*Updates* tab, or run `apk update && apk upgrade kringle luci-app-kringle`.
+*Updates* tab, or run `apk update && apk upgrade kringle`.
 Settings and data are kept.
 
 ### Settings
@@ -216,14 +219,14 @@ blocks traffic to the router.
 The package adds `/etc/config/kringle` and `/etc/kringle/` to
 `/lib/upgrade/keep.d/`, so settings and data survive a sysupgrade. Packages
 and the repository line don't survive one. Afterwards, repeat the
-repository setup and `apk add luci-app-kringle`. To keep the repository line,
+repository setup and `apk add kringle`. To keep the repository line,
 add `/etc/apk/keys/kringle.pem` and
 `/etc/apk/repositories.d/customfeeds.list` to `/etc/sysupgrade.conf`.
 
 ## How the repository is built
 
 `.github/workflows/openwrt.yml` runs on every push and pull request. It runs
-the tests, builds both packages and uploads them as a build artifact
+the tests, builds the package and uploads it as a build artifact
 (`kringle-openwrt-25.12-aarch64_cortex-a53`, handy for testing a branch).
 Pushes to `main` also deploy the signed repository to GitHub Pages.
 
@@ -244,15 +247,15 @@ scripts/build-openwrt.sh                        # -> dist/*.apk and site/
    as the C cross compiler and linker: `cargo install cargo-zigbuild --locked`
    and `pip install ziglang` (or any `zig` on `PATH`).
 2. The official OpenWrt SDK (`openwrt/sdk:mediatek-filogic-25.12.5`, in
-   Docker) packages it with the LuCI app.
+   Docker) packages it with the LuCI page.
 3. The SDK writes a `packages.adb` index, signed with the repository key.
 
 Its output:
 
 - `kringle-*.apk` contains the server, its procd service, the settings file
-  `/etc/config/kringle`, and a rule that keeps the settings and data across
-  firmware upgrades.
-- `luci-app-kringle-*.apk` contains the Services → Kringle page in LuCI.
+  `/etc/config/kringle`, a rule that keeps the settings and data across
+  firmware upgrades, and the Services → Kringle page in LuCI (one package,
+  like Monokulo and Handicrafts).
 - `site/` contains the project site. That's the landing page from
   `web/index.html` with the screenshots in `web/screenshots/`, the repository
   under `openwrt/25.12/aarch64_cortex-a53/`, and the public key.
@@ -262,7 +265,7 @@ it with a demo group and captures the pages with headless Chromium. It needs
 ImageMagick for WebP. Re-run it after UI changes and commit the new images.
 
 **Releases.** When a push to `main` carries a new version in `Cargo.toml`,
-the workflow also publishes a GitHub release (`v0.1.1`, …) with both packages
+the workflow also publishes a GitHub release (`v0.1.1`, …) with the package
 and the key attached (`scripts/release.sh`). Existing releases are never
 changed. Bump the version to cut a new one, and bump `PKG_VERSION` in
 `openwrt/kringle/Makefile` with it.
@@ -282,7 +285,7 @@ If the key is ever lost or leaked, make a new one and commit its public
 half. Then update the secret, and have every router fetch `kringle.pem`
 again.
 
-The package recipes in `openwrt/` also work as an OpenWrt feed
+The package recipe in `openwrt/` also works as an OpenWrt feed
 (`src-link kringle /path/to/openwrt`). Put the cross-compiled binary at
 `openwrt/kringle/files/kringle` first.
 

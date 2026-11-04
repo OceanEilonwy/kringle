@@ -127,5 +127,5 @@ it simple, make failures easy to diagnose, and give the host a resend button.
   Tuta's crypto). The Flint 2 has plenty of room.
 - Dependencies are held to versions released at least two weeks ago:
   22 crates the SDK pulled in at fresher versions were pinned back.
-- **Version 0.2.0** (luci-app-kringle 0.1.2). Merging to `main` publishes the
+- **Version 0.2.0** (luci-app-kringle 0.1.2, since merged into the kringle package). Merging to `main` publishes the
   release.
