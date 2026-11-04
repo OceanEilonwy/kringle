@@ -2,7 +2,8 @@
 name = "kringle"
 version = "0.2.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+# Tern and Tuta's SDK are GPL-3.0, and they are linked into the binary.
+license = "GPL-3.0-only"
 description = "A tiny Kris Kringle / Secret Santa gift swap server, small enough for a home router."
 
 [dependencies]
@@ -17,12 +18,14 @@ qrcodegen = "1.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "macros", "signal", "time", "sync"] }
-tutasdk = { package = "tuta-sdk", path = "vendor/tuta-sdk/sdk", default-features = false, features = ["net"] }
+# Tuta has no SMTP: Tern (an email client for Tuta) signs in and sends with
+# Tuta's own SDK. Pinned, as its API follows Tern's composer.
+tern-core = { git = "https://github.com/OceanEilonwy/tern", rev = "a97d5fb" }
+tern-tuta = { git = "https://github.com/OceanEilonwy/tern", rev = "a97d5fb" }
 
 # build.rs gzips the CSS, JS and SVGs; it runs on the build machine only.
 [workspace]
 members = ["."]
-exclude = ["vendor"]
 
 [build-dependencies]
 flate2 = "1"
