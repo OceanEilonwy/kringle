@@ -177,10 +177,11 @@ return view.extend({
 		o.depends('mail', 'smtp');
 
 		o = s.taboption('email', form.Value, 'mail_from', _('Sender address'),
-			_('Leave empty to send as the user name.'));
+			_('The From address. Leave empty to send as kringle@hollingworth.xyz. With Tuta it must be the account\'s own address or one of its aliases.'));
 		o.datatype = 'email';
-		o.placeholder = 'kringle@example.com';
+		o.placeholder = 'kringle@hollingworth.xyz';
 		o.depends('mail', 'smtp');
+		o.depends('mail', 'tuta');
 
 		o = s.taboption('email', form.Value, 'tuta_user', _('Tuta address'),
 			_('Kringle signs in to this Tuta account and sends from it. Use an account without two-factor sign-in; a separate free account just for Kringle works well. Emails to other Tuta users are end-to-end encrypted.'));

@@ -9,6 +9,12 @@ it simple, make failures easy to diagnose, and give the host a resend button.
 
 ## Tuta
 
+- **Update:** the vendored SDK is gone. Kringle now uses Tern's `tern-tuta`
+  crate (pinned git rev), as Handicrafts does. Mail is sent From
+  `kringle@hollingworth.xyz` by default (`KRINGLE_MAIL_FROM`); with Tuta that
+  must be the account's address or an alias. The notes below on the vendored
+  SDK are historical.
+
 - **Tuta has no SMTP**, so Kringle signs in to a Tuta account with Tuta's own
   Rust SDK and sends from it, as asked ("use the rust-sdk with sign on").
 - **The SDK has no send function.** It signs in and reads mail only. Kringle

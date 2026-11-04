@@ -26,7 +26,7 @@ their personal page.
 
 The code is Rust ([hyper](https://hyper.rs) HTTP/1.1 on tokio, with
 [maud](https://maud.lambda.xyz) templates), all in `src/main.rs` with email in
-`src/mail.rs`. Tuta's Rust SDK is vendored in `vendor/tuta-sdk/`. The design
+`src/mail.rs`. Tuta mail goes through [Tern](https://github.com/OceanEilonwy/tern)'s `tern-tuta` crate. The design
 canvas it was built from is in `design/`.
 
 ## Install on the router
@@ -120,8 +120,9 @@ Off by default. Turn it on in Services › Kringle › **Email** (or with the
 STARTTLS (587) works too; certificates are checked against the Mozilla roots
 built into Kringle, so the router needs no CA bundle.
 
-**Tuta:** Tuta has no SMTP, so Kringle signs in to a Tuta account with Tuta's
-own SDK and sends from it, like the Tuta app does. Mail to other Tuta
+**Tuta:** Tuta has no SMTP, so Kringle signs in to a Tuta account with Tern
+(which uses Tuta's own SDK) and sends from it as the sender address, which
+must be the account's address or an alias, like the Tuta app does. Mail to other Tuta
 addresses is end-to-end encrypted; mail to anyone else is delivered normally
 by Tuta. Use an account without two-factor sign-in (a separate free account
 just for Kringle is a good idea; free accounts have sending limits).
@@ -138,7 +139,7 @@ it stops, so sessions don't pile up in the account.
 | Port             | `smtp_port`      | `KRINGLE_SMTP_PORT`      | 465 / 587 / 25        |
 | User name        | `smtp_user`      | `KRINGLE_SMTP_USER`      | none                  |
 | Password         | `smtp_password`  | `KRINGLE_SMTP_PASSWORD`  |                       |
-| Sender address   | `mail_from`      | `KRINGLE_MAIL_FROM`      | the SMTP user name    |
+| Sender address   | `mail_from`      | `KRINGLE_MAIL_FROM`      | `kringle@hollingworth.xyz` |
 | Tuta address     | `tuta_user`      | `KRINGLE_TUTA_USER`      |                       |
 | Tuta password    | `tuta_password`  | `KRINGLE_TUTA_PASSWORD`  |                       |
 

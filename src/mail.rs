@@ -1,6 +1,6 @@
 //! Sending email: over SMTP (lettre, rustls with the bundled Mozilla roots)
-//! or from a Tuta account (Tuta's own Rust SDK, vendored in `vendor/`; Tuta
-//! has no SMTP). Settings come from the environment, which the OpenWrt init
+//! or from a Tuta account (through Tern's `tern-tuta` crate; Tuta has no
+//! SMTP). Settings come from the environment, which the OpenWrt init
 //! script fills from Services › Kringle in LuCI.
 //!
 //! Sending is deliberately simple: one plain-text mail per person, sent one at
@@ -38,17 +38,30 @@ pub enum Transport {
     Log(std::sync::Mutex<Vec<Letter>>),
 }
 
+/// Mail is sent from this address unless KRINGLE_MAIL_FROM says otherwise.
+pub const DEFAULT_FROM: &str = "kringle@hollingworth.xyz";
+
+fn sender_address(var: &impl Fn(&str) -> Option<String>) -> Result<String, String> {
+    match var("KRINGLE_MAIL_FROM") {
+        None => Ok(DEFAULT_FROM.into()),
+        Some(f) => clean_address(&f)
+            .ok_or(format!("KRINGLE_MAIL_FROM {f:?} isn't an email address")),
+    }
+}
+
 const ENV_HELP: &str = "\
 Email (all optional; set KRINGLE_MAIL to turn it on):
   KRINGLE_MAIL            off (default), smtp, tuta, or log (print mails to the log)
-  KRINGLE_MAIL_FROM_NAME  sender name                    (default Kringle)
+  KRINGLE_MAIL_FROM       sender address                 (default kringle@hollingworth.xyz)
+                          Tuta: must be the account's address or one of its aliases
+  KRINGLE_MAIL_FROM_NAME  sender name for SMTP           (default Kringle; Tuta uses
+                          the name set in Tuta)
   SMTP:
   KRINGLE_SMTP_HOST       server, e.g. smtp.example.com
   KRINGLE_SMTP_PORT       default 465 for tls, 587 for starttls, 25 for none
   KRINGLE_SMTP_SECURITY   tls (default), starttls, or none
   KRINGLE_SMTP_USER       login, if the server needs one
   KRINGLE_SMTP_PASSWORD
-  KRINGLE_MAIL_FROM       sender address                 (default KRINGLE_SMTP_USER)
   Tuta (signs in to a Tuta account and sends from it):
   KRINGLE_TUTA_USER       the account's address, e.g. kringle@tuta.com
   KRINGLE_TUTA_PASSWORD   its password (accounts with two-factor sign-in can't be used)
@@ -98,13 +111,10 @@ impl Transport {
                     let password = need("KRINGLE_SMTP_PASSWORD")?;
                     b = b.credentials(Credentials::new(user.clone(), password));
                 }
-                let address = var("KRINGLE_MAIL_FROM")
-                    .or(user.clone())
-                    .ok_or("KRINGLE_MAIL_FROM is not set (and there's no KRINGLE_SMTP_USER to use instead)")?;
+                let address = sender_address(&var)?;
                 let from = Mailbox::new(
                     Some(from_name),
                     address
-                        .trim()
                         .parse()
                         .map_err(|e| format!("KRINGLE_MAIL_FROM {address:?}: {e}"))?,
                 );
@@ -117,7 +127,7 @@ impl Transport {
             Some("tuta") => Ok(Some(Transport::Tuta(Tuta {
                 user: need("KRINGLE_TUTA_USER")?.trim().to_string(),
                 password: need("KRINGLE_TUTA_PASSWORD")?,
-                from_name,
+                from: sender_address(&var)?,
                 session: Default::default(),
             }))),
             Some(other) => Err(format!(
@@ -129,7 +139,7 @@ impl Transport {
     pub fn describe(&self) -> String {
         match self {
             Transport::Smtp { describe, .. } => describe.clone(),
-            Transport::Tuta(t) => format!("Tuta as {}", t.user),
+            Transport::Tuta(t) => format!("Tuta as {}, from {}", t.user, t.from),
             Transport::Log(_) => "printed to the log, not sent (KRINGLE_MAIL=log)".into(),
         }
     }
@@ -210,30 +220,37 @@ fn smtp_reason(e: &lettre::transport::smtp::Error) -> String {
     out
 }
 
-/// A Tuta account. Signs in on the first mail and keeps the session; any
-/// failure drops it, so the next mail signs in afresh.
+/// A Tuta account, through Tern's `tern-tuta` crate. Signs in on the first
+/// mail and keeps the session; any failure drops it, so the next mail signs
+/// in afresh.
+///
+/// Tuta sends from the account's main address or one of its aliases, with
+/// the display name set in Tuta, not here.
 pub struct Tuta {
     user: String,
     password: String,
-    from_name: String,
-    session: tokio::sync::Mutex<Option<Arc<tutasdk::LoggedInSdk>>>,
+    /// The address to send from, an alias of the account.
+    from: String,
+    session: tokio::sync::Mutex<Option<Session>>,
 }
 
-const TUTA_API: &str = "https://app.tuta.com";
-
-type Sdk = Arc<tutasdk::LoggedInSdk>;
+type Session = Arc<dyn tern_core::Backend>;
 
 impl Tuta {
-    async fn sign_in(&self) -> Result<Sdk, String> {
-        let rest = Arc::new(
-            tutasdk::net::native_rest_client::NativeRestClient::try_new()
-                .map_err(|e| format!("Tuta: {e}"))?,
-        );
-        let files = Arc::new(tutasdk::bindings::test_file_client::TestFileClient::default());
-        tutasdk::Sdk::new(TUTA_API.into(), rest, files)
-            .create_session(&self.user, &self.password)
+    async fn sign_in(&self) -> Result<Session, String> {
+        let (backend, _saved) = tern_tuta::login(&self.user, &self.password)
             .await
-            .map_err(|e| format!("Tuta sign-in as {} failed: {e}", self.user))
+            .map_err(|e| format!("Tuta sign-in as {} failed: {}", self.user, tuta_reason(&e)))?;
+        if !backend.account().owns(&self.from) {
+            let _ = backend.sign_out().await;
+            return Err(format!(
+                "the Tuta account {} can't send from {}: add it as an alias in Tuta, or change the sender address (it can send from: {})",
+                self.user,
+                self.from,
+                backend.account().addresses().join(", ")
+            ));
+        }
+        Ok(backend)
     }
 
     async fn send(&self, letter: &Letter) -> Result<(), String> {
@@ -242,19 +259,30 @@ impl Tuta {
         with_session(
             &mut session,
             || self.sign_in(),
-            |sdk: Sdk| {
+            |backend: Session| {
                 let html = html.clone();
                 async move {
-                    sdk.send_mail(
-                        &self.user,
-                        &self.from_name,
-                        &letter.to_name,
-                        &letter.to,
-                        &letter.subject,
-                        &html,
-                    )
-                    .await
-                    .map_err(|e| (signed_out(&e), format!("Tuta: {e}")))
+                    let draft = tern_core::Draft {
+                        to: vec![tern_core::Address::new(
+                            letter.to_name.clone(),
+                            letter.to.clone(),
+                        )],
+                        cc: vec![],
+                        bcc: vec![],
+                        subject: letter.subject.clone(),
+                        body_html: html,
+                        attachments: vec![],
+                        previous: None,
+                        existing: None,
+                        kept: vec![],
+                        from: Some(self.from.clone()),
+                    };
+                    backend.send(draft).await.map_err(|e| {
+                        (
+                            e == tern_core::Error::SessionExpired,
+                            format!("Tuta: {}", tuta_reason(&e)),
+                        )
+                    })
                 }
             },
         )
@@ -263,31 +291,32 @@ impl Tuta {
 
     /// Sign in afresh and sign straight out again.
     async fn check(&self) -> Result<String, String> {
-        let sdk = self.sign_in().await?;
-        let _ = sdk.delete_session().await;
-        Ok(format!("Signed in to Tuta as {}.", self.user))
+        let backend = self.sign_in().await?;
+        let _ = backend.sign_out().await;
+        Ok(format!(
+            "Signed in to Tuta as {}; mail is sent from {}.",
+            self.user, self.from
+        ))
     }
 
     /// Sign the kept session out, so sessions don't pile up in the account.
     async fn close(&self) {
-        if let Some(sdk) = self.session.lock().await.take()
-            && let Err(e) = sdk.delete_session().await
+        if let Some(backend) = self.session.lock().await.take()
+            && let Err(e) = backend.sign_out().await
         {
             eprintln!("kringle: signing out of Tuta failed: {e}");
         }
     }
 }
 
-/// Whether Tuta refused the session itself (expired or signed out
-/// elsewhere), so signing in again is worth one more try.
-fn signed_out(e: &tutasdk::SendMailError) -> bool {
-    use tutasdk::rest_error::HttpError::{NotAuthenticatedError, SessionExpiredError};
-    matches!(
-        e,
-        tutasdk::SendMailError::Api(tutasdk::ApiCallError::ServerResponseError {
-            source: NotAuthenticatedError | SessionExpiredError
-        })
-    )
+/// Tern's errors, with the advice that fits a server.
+fn tuta_reason(e: &tern_core::Error) -> String {
+    match e {
+        tern_core::Error::SecondFactorRequired => {
+            "this account uses two-factor sign-in, which a server can't answer. Use a separate sending account without it.".into()
+        }
+        other => other.to_string(),
+    }
 }
 
 /// Run `send` with the kept session, signing in first if there is none. Any

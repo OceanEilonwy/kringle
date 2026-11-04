@@ -3600,9 +3600,13 @@ mod tests {
             .contains("tls, starttls or none")
         );
         assert!(
-            check(&[("KRINGLE_MAIL", "smtp"), ("KRINGLE_SMTP_HOST", "h")])
-                .unwrap_err()
-                .contains("KRINGLE_MAIL_FROM")
+            check(&[
+                ("KRINGLE_MAIL", "smtp"),
+                ("KRINGLE_SMTP_HOST", "h"),
+                ("KRINGLE_MAIL_FROM", "nope")
+            ])
+            .unwrap_err()
+            .contains("KRINGLE_MAIL_FROM")
         );
         assert_eq!(
             check(&[
@@ -3620,9 +3624,9 @@ mod tests {
                 ("KRINGLE_SMTP_PASSWORD", "pw"),
             ]),
             Ok(Some(
-                "SMTP via smtp.example.com:465 (tls) as me@example.com".into()
+                "SMTP via smtp.example.com:465 (tls) as kringle@hollingworth.xyz".into()
             )),
-            "implicit TLS on 465 by default, sending as the login"
+            "implicit TLS on 465 by default, sending as kringle@hollingworth.xyz"
         );
         assert_eq!(
             check(&[
@@ -3656,7 +3660,7 @@ mod tests {
                 ("KRINGLE_TUTA_USER", "k@tuta.com"),
                 ("KRINGLE_TUTA_PASSWORD", "pw")
             ]),
-            Ok(Some("Tuta as k@tuta.com".into()))
+            Ok(Some("Tuta as k@tuta.com, from kringle@hollingworth.xyz".into()))
         );
         assert!(
             check(&[("KRINGLE_MAIL", "gmail")])

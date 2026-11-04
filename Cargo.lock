@@ -147,6 +147,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "aws-lc-rs"
+version = "1.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "048006790404103c488e6c5616b3e7e702a71292aadda08e8f7698a9e0d2eb53"
+dependencies = [
+ "aws-lc-sys",
+ "zeroize",
+]
+
+[[package]]
+name = "aws-lc-sys"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52"
+dependencies = [
+ "cc",
+ "cmake",
+ "dunce",
+ "fs_extra",
+ "pkg-config",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -312,22 +335,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "colored"
-version = "3.1.1"
+name = "cmake"
+version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
 dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
+ "cc",
 ]
 
 [[package]]
@@ -410,13 +423,13 @@ dependencies = [
 
 [[package]]
 name = "crypto-primitives"
-version = "365.261030.0"
+version = "365.261029.1"
+source = "git+https://github.com/OceanEilonwy/tern?rev=a97d5fb#a97d5fbe9929db42ba01523082d15ede807bf1ae"
 dependencies = [
  "aes",
  "base64 0.22.1",
  "blake3",
  "cbc",
- "console_error_panic_hook",
  "const-hex",
  "ctr",
  "ed25519-dalek",
@@ -643,6 +656,12 @@ checksum = "88a41f105fe1d5b6b34b2055e3dc59bb79b46b48b2040b9e6c7b4b5de097aa41"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "fs_extra"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "futures"
@@ -950,13 +969,13 @@ dependencies = [
  "http",
  "hyper",
  "hyper-util",
+ "log 0.4.34",
  "rustls",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -1165,8 +1184,9 @@ dependencies = [
  "qrcodegen",
  "serde",
  "serde_json",
+ "tern-core",
+ "tern-tuta",
  "tokio",
- "tuta-sdk",
 ]
 
 [[package]]
@@ -1589,6 +1609,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-config"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
 name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1881,6 +1907,7 @@ version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
+ "aws-lc-rs",
  "log 0.4.34",
  "once_cell",
  "ring",
@@ -1917,6 +1944,7 @@ version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
+ "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -2157,18 +2185,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
-name = "simple_logger"
-version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7038d0e96661bf9ce647e1a6f6ef6d6f3663f66d9bf741abf14ba4876071c17"
-dependencies = [
- "colored",
- "log 0.4.34",
- "time",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "siphasher"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2294,6 +2310,32 @@ checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "tern-core"
+version = "0.1.0"
+source = "git+https://github.com/OceanEilonwy/tern?rev=a97d5fb#a97d5fbe9929db42ba01523082d15ede807bf1ae"
+dependencies = [
+ "async-trait",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "tern-tuta"
+version = "0.1.0"
+source = "git+https://github.com/OceanEilonwy/tern?rev=a97d5fb#a97d5fbe9929db42ba01523082d15ede807bf1ae"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "crypto-primitives",
+ "log 0.4.34",
+ "serde",
+ "serde_json",
+ "tern-core",
+ "tokio",
+ "tuta-sdk",
 ]
 
 [[package]]
@@ -2561,7 +2603,8 @@ dependencies = [
 
 [[package]]
 name = "tuta-sdk"
-version = "365.261030.0"
+version = "365.261029.1"
+source = "git+https://github.com/OceanEilonwy/tern?rev=a97d5fb#a97d5fbe9929db42ba01523082d15ede807bf1ae"
 dependencies = [
  "android_log",
  "argon2",
@@ -2593,7 +2636,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
- "simple_logger",
  "thiserror 2.0.21",
  "time",
  "time-tz",
@@ -2773,7 +2815,8 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "util"
-version = "365.261030.0"
+version = "365.261029.1"
+source = "git+https://github.com/OceanEilonwy/tern?rev=a97d5fb#a97d5fbe9929db42ba01523082d15ede807bf1ae"
 dependencies = [
  "thiserror 2.0.21",
 ]
