@@ -975,6 +975,40 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Saints and a fitting group name, for the grey example text in forms:
+/// nobody typing is called "St. Nicholas", so it can't be mistaken for
+/// something already filled in.
+const EXAMPLES: [(&str, &str); 20] = [
+    ("St. Nicholas", "The Stocking Fillers"),
+    ("St. Stephen", "Stephen’s Boxing Day Bunch"),
+    ("St. Lucy", "The Lucy Light Brigade"),
+    ("St. Francis", "Francis & Friends of the Forest"),
+    ("St. Agnes", "The Lambs of Agnes"),
+    ("St. Cecilia", "The Cecilia Carol Club"),
+    ("St. Benedict", "Benedict’s Bread & Brandy"),
+    ("St. Ambrose", "The Ambrose Bee Keepers"),
+    ("St. Bridget", "Bridget’s Brew Crew"),
+    ("St. Columba", "The Columba Doves"),
+    ("St. Hilda", "The Whitby Abbey Exchange"),
+    ("St. Swithin", "Swithin’s Rainy Day Fund"),
+    ("St. Alban", "Alban’s Last Stand"),
+    ("St. Cuthbert", "Cuthbert’s Lindisfarne Lot"),
+    ("St. Aidan", "Aidan’s Beacon Fire"),
+    ("St. Anselm", "Anselm’s Big Argument"),
+    ("St. Dunstan", "Dunstan’s Hot Tongs Society"),
+    ("St. Winifred", "The Winifred Wishing Well"),
+    ("St. Crispin", "The Crispin Cobblers"),
+    ("St. Martin", "Martin’s Half-Cloak Club"),
+];
+
+/// A random example (name, group name, email), chosen per page load.
+fn example() -> (&'static str, &'static str, String) {
+    let (name, group) = EXAMPLES[rand_below(EXAMPLES.len())];
+    let first = name.strip_prefix("St. ").unwrap_or(name);
+    let email = format!("{}@example.com", first.to_lowercase());
+    (name, group, email)
+}
+
 fn random_bytes<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
     getrandom::fill(&mut b).expect("system randomness");
@@ -1151,7 +1185,7 @@ struct App {
     /// Wakes the mail worker after something was queued.
     mail_wake: tokio::sync::Notify,
     /// Emails not tied to a group, waiting for the mail worker (the
-    /// "Locked out?" link emails).
+    /// "Looking for a swap?" link emails).
     outbox: Mutex<Vec<mail::Letter>>,
     /// When each address, and each peer, last asked for its links.
     lockout: Mutex<HashMap<String, u64>>,
@@ -1397,7 +1431,7 @@ fn not_found() -> Res {
             section.panel {
                 h1 { "This link doesn’t work" }
                 p { "It may have a typo, or the group may have been deleted. Ask whoever sent it to check." }
-                a.btn href="/" { "Start a new gift swap" }
+                a.btn href="/" { (icon(GIFT_ICON)) "Start a new gift swap" }
             }
         },
     );
@@ -1434,6 +1468,21 @@ macro_rules! gz {
     ($file:literal) => {
         include_bytes!(concat!(env!("OUT_DIR"), "/", $file, ".gz"))
     };
+}
+
+/// A short hash of the stylesheet and script, put on their URLs so a browser
+/// that cached an old copy (they're kept for a day) fetches the new one as
+/// soon as the pages that need it are served.
+fn asset_version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        // FNV-1a: no dependency needed for a cache key.
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in gz!("style.css").iter().chain(gz!("app.js").iter()) {
+            h = (h ^ *b as u64).wrapping_mul(0x100000001b3);
+        }
+        format!("{:08x}", h >> 32)
+    })
 }
 
 fn asset(file: &str) -> Res {
@@ -1517,8 +1566,10 @@ fn create(app: &App, peer: Option<IpAddr>, form: &Form, headers: &HeaderMap) -> 
         require_email: mail_on && form.has("require_email"),
     };
     let create_page = |f: &CreateForm, e: Option<&str>| create_page(f, e, mail_on);
-    let email = if mail_on {
-        form_email(&f.email, f.require_email)
+    // "Use emails" off hides the host's email box, so whatever it held is
+    // ignored.
+    let email = if mail_on && f.require_email {
+        form_email(&f.email, true)
     } else {
         Ok(String::new())
     };
@@ -1968,8 +2019,8 @@ fn layout(title: &str, header_right: Markup, body: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 meta name="robots" content="noindex";
                 title { (title) }
-                link rel="stylesheet" href="/static/style.css";
-                script src="/static/app.js" defer {}
+                link rel="stylesheet" href=(format!("/static/style.css?v={}", asset_version()));
+                script src=(format!("/static/app.js?v={}", asset_version())) defer {}
             }
             body {
                 div.sky aria-hidden="true" {
@@ -1988,57 +2039,74 @@ fn layout(title: &str, header_right: Markup, body: Markup) -> Markup {
     }
 }
 
+/// The red asterisk after the label of a required input. The stylesheet
+/// hides it while the input is disabled.
+fn star() -> Markup {
+    html! { span.star aria-hidden="true" { "*" } }
+}
+
 fn icon(svg: &'static str) -> Markup {
     PreEscaped(svg.to_string())
 }
 
 fn create_page(f: &CreateForm, error: Option<&str>, mail_on: bool) -> Markup {
+    let (eg_name, eg_group, eg_email) = example();
     layout(
         "Start a gift swap · Kringle",
-        html! { span.tagline { "No sign-up. No app. Just a link." } },
+        html! {
+            @if mail_on {
+                a.badge.red href="/locked-out" { (icon(SEARCH)) "Looking for a swap?" }
+            } @else {
+                span.tagline { "No sign-up. No app. Just a link." }
+            }
+        },
         html! {
             form.panel.stack method="post" action="/groups" {
                 div.row {
                     h1 { "Start a gift swap" }
                     span.aside { "takes 1 min" }
                 }
+                @if mail_on {
+                    p.small.under { a href="/locked-out" { "Looking for an existing swap?" } }
+                }
                 @if let Some(e) = error { p.error role="alert" { (e) } }
                 label.field {
-                    "Group name"
-                    input type="text" name="group" maxlength=(GROUP_MAX) required placeholder="The Morgans’ Christmas" value=(f.group);
+                    span { "Group name" (star()) }
+                    input type="text" name="group" maxlength=(GROUP_MAX) required placeholder=(eg_group) value=(f.group);
                 }
-                label.field {
-                    "Your name"
-                    input type="text" name="host" maxlength=(NAME_MAX) required placeholder="Rosa" autocomplete="given-name" value=(f.host);
+                div.field {
+                    div.fieldhead {
+                        label for="host" { "Your name" (star()) }
+                        label.check.plain.inline {
+                            input type="checkbox" name="plays" value="1" checked[f.plays];
+                            "I’m in the draw too"
+                        }
+                    }
+                    input #host type="text" name="host" maxlength=(NAME_MAX) required placeholder=(eg_name) autocomplete="given-name" value=(f.host);
                     span.hint { "Shown to everyone as the host." }
                 }
                 label.field {
-                    "Budget"
+                    span.row.start { "Budget" span.hint.opt { "(optional)" } }
                     span.money {
                         span aria-hidden="true" { "$" }
                         input type="text" name="budget" inputmode="numeric" maxlength=(BUDGET_MAX) placeholder="30" value=(f.budget);
                     }
-                    span.hint { "Optional." }
-                }
-                label.check {
-                    input type="checkbox" name="plays" value="1" checked[f.plays];
-                    "I’m in the draw too"
                 }
                 @if mail_on {
-                    label.check {
-                        input type="checkbox" name="require_email" value="1" checked[f.require_email];
-                        "Require emails"
-                    }
-                    p.muted.small { "Everyone who joins gives an email and gets their link by email, and again when names are drawn." }
-                    label.field {
-                        "Your email"
-                        input type="email" name="email" maxlength="254" placeholder="rosa@example.com" autocomplete="email" value=(f.email);
-                        span.hint { "We email you your admin link. Needed when emails are required." }
+                    div.emailbox {
+                        label.check.plain {
+                            input type="checkbox" name="require_email" value="1" checked[f.require_email];
+                            "Use emails"
+                        }
+                        p.muted.small { "Everyone who joins gives an email and gets their link by email, and again when names are drawn." }
+                        label.field {
+                            span { "Your email" (star()) }
+                            input type="email" name="email" maxlength="254" required placeholder=(eg_email) autocomplete="email" value=(f.email) data-enable-with="require_email" disabled[!f.require_email];
+                            span.hint { "We email you your admin link." }
+                        }
                     }
                 }
                 button.btn.primary.big type="submit" { (icon(GIFT_ICON)) "Create group" }
-                p.lock { (icon(LOCK)) "No accounts. You’ll get a private admin link. It’s the only key to your group, so keep it safe." }
-                @if mail_on { p.small { "Lost a link? " a href="/locked-out" { "Locked out?" } } }
             }
         },
     )
@@ -2088,6 +2156,7 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
             )),
         ),
     };
+    let too_few = matches!(verdict, draw::Verdict::TooFew);
     let rule_problem = matches!(
         verdict,
         draw::Verdict::Stuck(_) | draw::Verdict::Impossible | draw::Verdict::Forced(_)
@@ -2107,11 +2176,19 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
     let opened = g.members.iter().filter(|m| m.opened).count();
     let my_page = g.host_member().map(|m| format!("/p/{}", m.token));
 
+    // The host's own page: beside the invite link before the draw, under the
+    // title after it.
+    let own_page = html! {
+        @if let Some(url) = &my_page {
+            a.btn.green.small href=(url) { "Your own page" (icon(ARROW_RIGHT)) }
+        }
+    };
+
     layout(
         &format!("{} · Host · Kringle", g.name),
         html! {
-            span.badge.hide-small { (icon(LOCK)) "Host view" }
-            button.btn.small.danger type="button" command="show-modal" commandfor="delete-dialog" { "Delete group" }
+            span.badge.host { (icon(LOCK)) "Host" span.hide-small { " view" } }
+            button.btn.small.danger type="button" command="show-modal" commandfor="delete-dialog" { (icon(TRASH)) "Delete group" }
         },
         html! {
             div.intro.tight {
@@ -2119,8 +2196,8 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                 p.onsky-muted {
                     "Hosted by " (g.host)
                     @if !g.budget.is_empty() { " · $" (g.budget) " budget" }
-                    @if let Some(url) = &my_page { " · " a href=(url) { "Your own page" } }
                 }
+                @if g.drawn.is_some() { (own_page) }
             }
             @if let Some(e) = error { p.error role="alert" { (e) } }
 
@@ -2134,7 +2211,6 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     }
                     p.small { "You see who’s opened theirs, never who they got." }
                 }
-                (mail_strip(g, &admin_path))
                 section.panel {
                     details.disclose {
                         summary { "Who’s opened & more options" }
@@ -2147,24 +2223,27 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                             }
                         }
                         div.inset {
-                            p { strong { "Someone lost their link?" } " They reopen the invite link on the same phone, or ask for it on the “Locked out?” page." }
+                            p { strong { "Someone lost their link?" } " They reopen the invite link on the same phone, or ask for it on the “Looking for a swap?” page." }
                             p { strong { "Need to change the group?" } " Cancelling reopens joining. When you draw again, everyone gets a new tag." }
                             form method="post" action=(format!("{admin_path}/undraw")) data-confirm="Cancel the draw and reopen joining? Everyone’s gift tag disappears until you draw again." {
-                                button.btn type="submit" { "Cancel draw & reopen" }
+                                button.btn type="submit" { (icon(UNDO)) "Cancel draw & reopen" }
                             }
                         }
                     }
                 }
             } @else {
                 section.hero #invite {
-                    h2 { "Invite people" }
+                    div.row {
+                        h2 { "Invite people" }
+                        (own_page)
+                    }
                     p { "Send this link to the group chat." }
                     div.linkrow {
                         input type="text" readonly value=(invite_url) aria-label="Invite link";
-                        button.btn type="button" data-copy=(invite_url) { "Copy" }
+                        button.btn type="button" data-share=(invite_url) data-share-title=(g.name) data-share-text=(format!("{} invited you to a gift swap, {}.", g.host, g.name)) { (icon(SHARE)) span { "Share" } }
                     }
                     details {
-                        summary.link { "Show QR code" }
+                        summary.link { (icon(QR)) "Show QR code" }
                         div.qr { (PreEscaped(qr_svg(&invite_url))) }
                     }
                 }
@@ -2172,7 +2251,7 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                 section.panel.tight #people data-poll=(admin_path) data-poll-ids="count chips manage-list" {
                     div.row {
                         h2 { "Who’s in " span.count #count { "· " (n) } }
-                        button.btn.small type="button" command="show-modal" commandfor="people-dialog" { "Manage" }
+                        button.btn.small type="button" command="show-modal" commandfor="people-dialog" { (icon(USERS)) "Manage" }
                     }
                     ul.chips #chips {
                         @for m in &g.members { li title=(m.name) { (m.name) @if m.host { " (you)" } } }
@@ -2186,17 +2265,23 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                             li {
                                 span.name title=(m.name) { (m.name) }
                                 form method="post" action=(format!("{admin_path}/people/{}/delete", m.id)) data-confirm=(format!("Remove {} from the group?", m.name)) {
-                                    button.btn.small type="submit" aria-label=(format!("Remove {}", m.name)) { "Remove" }
+                                    button.btn.small type="submit" aria-label=(format!("Remove {}", m.name)) { (icon(TRASH)) "Remove" }
                                 }
                             }
                         }
                         @if !g.members.iter().any(|m| !m.host) { li.empty { span.muted { "Nobody to remove yet." } } }
                     }
-                    form method="dialog" { button.btn.small type="submit" { "Close" } }
+                    form method="dialog" { button.btn.small type="submit" { (icon(CROSS)) "Close" } }
                 }
 
-                (mail_strip(g, &admin_path))
-
+                @if too_few {
+                    @if let Some((title, text)) = &problem {
+                        div.problem.loud #draw role="alert" {
+                            (icon(WARN))
+                            span { strong { (title) } (text) }
+                        }
+                    }
+                } @else {
                 section.panel.tight #draw {
                     h2 { "Draw names" }
                     @match &problem {
@@ -2212,80 +2297,81 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     @if host_can_deduce {
                         p.warn { "The group is small enough that once you see your own tag, you could work out who someone else got. Invite more people to keep it a surprise." }
                     }
-                    form method="post" action=(format!("{admin_path}/draw")) data-confirm="Draw names now? Joining closes and everyone gets their gift tag." {
-                        button.btn.primary.big type="submit" disabled[!ready] { "Draw names" }
-                    }
-                    details.disclose #rules open[rules_open] {
-                        summary { (rules_label) }
-                        div.inset {
-                            p.muted { "Stop someone drawing a particular person: partners, housemates, last year’s match." }
-                            @if n >= 2 {
-                                form.stack method="post" action=(format!("{admin_path}/rules")) {
-                                    div.rulegrid {
-                                        label.field {
-                                            "Giver"
-                                            select name="giver" {
-                                                @for m in &g.members { option value=(m.id) { (m.name) } }
-                                            }
-                                        }
-                                        span.cant aria-hidden="true" { (icon(ONE_WAY)) }
-                                        label.field {
-                                            "Can’t give to"
-                                            select name="receiver" {
-                                                @for (k, m) in g.members.iter().enumerate() { option value=(m.id) selected[k == 1] { (m.name) } }
-                                            }
-                                        }
-                                    }
-                                    div.ruleactions {
-                                        label.check.plain {
-                                            input type="checkbox" name="both" value="1" checked;
-                                            "Both ways"
-                                        }
-                                        button.btn type="submit" { "Add rule" }
-                                    }
-                                }
-                            } @else {
-                                p.muted { "Rules can be added once two people have joined." }
-                            }
-                            @if !g.rules.is_empty() {
-                                ul.rules {
-                                    @for (i, r) in g.rules.iter().enumerate() {
-                                        li {
-                                            span.pair {
-                                                span title=(name_of(r.giver)) { (name_of(r.giver)) }
-                                                @if r.both {
-                                                    span role="img" aria-label="can’t give to each other" { (icon(BOTH_WAYS)) }
-                                                } @else {
-                                                    span role="img" aria-label="can’t give to" { (icon(ONE_WAY)) }
+                        form method="post" action=(format!("{admin_path}/draw")) data-confirm="Draw names now? Joining closes and everyone gets their gift tag." {
+                            button.btn.primary.big type="submit" disabled[!ready] { (icon(SHUFFLE)) "Draw names" }
+                        }
+                        details.disclose #rules open[rules_open] {
+                            summary { (rules_label) }
+                            div.inset {
+                                p.muted { "Stop someone drawing a particular person: partners, housemates, last year’s match." }
+                                @if n >= 2 {
+                                    form.stack method="post" action=(format!("{admin_path}/rules")) {
+                                        div.rulegrid {
+                                            label.field {
+                                                "Giver"
+                                                select name="giver" {
+                                                    @for m in &g.members { option value=(m.id) { (m.name) } }
                                                 }
-                                                span title=(name_of(r.receiver)) { (name_of(r.receiver)) }
                                             }
-                                            form method="post" action=(format!("{admin_path}/rules/{i}/delete")) {
-                                                button.iconbtn type="submit" aria-label=(format!("Remove rule {} and {}", name_of(r.giver), name_of(r.receiver))) { (icon(CROSS)) }
+                                            span.cant aria-hidden="true" { (icon(ONE_WAY)) }
+                                            label.field {
+                                                "Can’t give to"
+                                                select name="receiver" {
+                                                    @for (k, m) in g.members.iter().enumerate() { option value=(m.id) selected[k == 1] { (m.name) } }
+                                                }
+                                            }
+                                        }
+                                        div.ruleactions {
+                                            label.check.plain {
+                                                input type="checkbox" name="both" value="1" checked;
+                                                "Both ways"
+                                            }
+                                            button.btn type="submit" { (icon(PLUS)) "Add rule" }
+                                        }
+                                    }
+                                } @else {
+                                    p.muted { "Rules can be added once two people have joined." }
+                                }
+                                @if !g.rules.is_empty() {
+                                    ul.rules {
+                                        @for (i, r) in g.rules.iter().enumerate() {
+                                            li {
+                                                span.pair {
+                                                    span title=(name_of(r.giver)) { (name_of(r.giver)) }
+                                                    @if r.both {
+                                                        span role="img" aria-label="can’t give to each other" { (icon(BOTH_WAYS)) }
+                                                    } @else {
+                                                        span role="img" aria-label="can’t give to" { (icon(ONE_WAY)) }
+                                                    }
+                                                    span title=(name_of(r.receiver)) { (name_of(r.receiver)) }
+                                                }
+                                                form method="post" action=(format!("{admin_path}/rules/{i}/delete")) {
+                                                    button.iconbtn type="submit" aria-label=(format!("Remove rule {} and {}", name_of(r.giver), name_of(r.receiver))) { (icon(CROSS)) }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    p.muted.small { "Joining closes when you draw. You won’t see who got who." }
+                }
                 }
             }
 
             div.strip {
                 (icon(LOCK))
                 p { strong { "This page is your admin link." } " Keep it private." }
-                button.btn.small type="button" data-copy=(admin_url) { "Copy admin link" }
+                button.btn.small type="button" data-copy=(admin_url) { (icon(COPY)) span { "Copy admin link" } }
             }
+            (mail_strip(g, &admin_path))
 
             dialog #delete-dialog aria-labelledby="delete-title" {
                 h2 #delete-title { "Delete this group" }
                 p { "This removes the group, everyone’s wishes and the draw for good. All of its links stop working." }
                 div.actions {
-                    form method="dialog" { button.btn type="submit" { "Keep it" } }
+                    form method="dialog" { button.btn type="submit" { (icon(BACK)) "Keep it" } }
                     form method="post" action=(format!("{admin_path}/delete")) {
-                        button.btn.danger type="submit" { "Delete group" }
+                        button.btn.danger type="submit" { (icon(TRASH)) "Delete group" }
                     }
                 }
             }
@@ -2326,7 +2412,7 @@ fn mail_strip(g: &Group, admin_path: &str) -> Markup {
         div.strip.bad[!failed.is_empty()] #mail {
             @if failed.is_empty() { (icon(CHECK)) } @else { (icon(WARN)) }
             p { strong { "Emails" } " " (summary) }
-            button.btn.small type="button" command="show-modal" commandfor="mail-dialog" { "Details" }
+            button.btn.small type="button" command="show-modal" commandfor="mail-dialog" { (icon(MAIL)) "Details" }
         }
         dialog #mail-dialog aria-labelledby="mail-title" {
             h2 #mail-title { "Emails" }
@@ -2342,7 +2428,7 @@ fn mail_strip(g: &Group, admin_path: &str) -> Markup {
                     }
                 }
                 form method="post" action=(format!("{admin_path}/resend")) {
-                    button.btn type="submit" { "Resend failed emails" }
+                    button.btn type="submit" { (icon(UNDO)) "Resend failed emails" }
                 }
             }
             ul.rows {
@@ -2357,7 +2443,7 @@ fn mail_strip(g: &Group, admin_path: &str) -> Markup {
                     }
                 }
             }
-            form method="dialog" { button.btn.small type="submit" { "Close" } }
+            form method="dialog" { button.btn.small type="submit" { (icon(CROSS)) "Close" } }
         }
     }
 }
@@ -2385,7 +2471,7 @@ fn locked_out(app: &App, error: Option<&str>, typed: &str) -> Res {
     page(locked_out_page(app.mail.is_some(), error, typed, false))
 }
 
-/// "Locked out?": email whatever links belong to an address. The answer is
+/// "Looking for a swap?": email whatever links belong to an address. The answer is
 /// the same whether or not the address is in any group, so this can't be
 /// used to find out who is.
 fn locked_out_post(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
@@ -2483,12 +2569,13 @@ fn links_letter(data: &Data, email: &str, public_url: Option<&str>) -> Option<ma
 }
 
 fn locked_out_page(mail_on: bool, error: Option<&str>, typed: &str, sent: bool) -> Markup {
+    let (_, _, eg_email) = example();
     layout(
-        "Locked out? · Kringle",
-        html! { span.tagline { "Lost a link? Get it by email." } },
+        "Looking for a swap? · Kringle",
+        html! { a.badge.red href="/" { (icon(GIFT_ICON)) "Start a swap" } },
         html! {
             section.panel.stack {
-                h1 { "Locked out?" }
+                h1 { "Looking for a swap?" }
                 @if !mail_on {
                     p { "This Kringle can’t send email, so it can’t resend links. Ask whoever runs it, or ask your host for yours." }
                 } @else if sent {
@@ -2499,10 +2586,10 @@ fn locked_out_page(mail_on: bool, error: Option<&str>, typed: &str, sent: bool) 
                     @if let Some(e) = error { p.error role="alert" { (e) } }
                     form.stack method="post" action="/locked-out" {
                         label.field {
-                            "Your email"
-                            input type="email" name="email" maxlength="254" required placeholder="rosa@example.com" autocomplete="email" value=(typed);
+                            span { "Your email" (star()) }
+                            input type="email" name="email" maxlength="254" required placeholder=(eg_email) autocomplete="email" value=(typed);
                         }
-                        button.btn.primary.big type="submit" { "Email me my links" }
+                        button.btn.primary.big type="submit" { (icon(MAIL)) "Email me my links" }
                     }
                     p.muted.small { "Only works for groups where you gave an email." }
                 }
@@ -2520,7 +2607,7 @@ fn deleted_page() -> Markup {
             section.panel {
                 h1 { "Group deleted" }
                 p { "The group, its wishes and its draw are gone, and its links no longer work." }
-                a.btn href="/" { "Start a new gift swap" }
+                a.btn href="/" { (icon(GIFT_ICON)) "Start a new gift swap" }
             }
         },
     )
@@ -2534,6 +2621,7 @@ fn join_page(
     ask_email: bool,
 ) -> Markup {
     let n = g.members.len();
+    let (eg_name, _, eg_email) = example();
     layout(
         &format!("Join {} · Kringle", g.name),
         html! {},
@@ -2554,7 +2642,7 @@ fn join_page(
                 section.panel {
                     h2 { "Welcome back, " (m.name) }
                     p { "You’ve already joined this group on this device." }
-                    a.btn.primary.big href=(format!("/p/{}", m.token)) { "Open my page" }
+                    a.btn.primary.big href=(format!("/p/{}", m.token)) { "Open my page" (icon(ARROW_RIGHT)) }
                 }
             } @else if g.drawn.is_some() {
                 section.panel {
@@ -2565,18 +2653,18 @@ fn join_page(
                 form.panel.stack method="post" action=(format!("/j/{}", g.invite)) {
                     @if let Some(e) = error { p.error role="alert" { (e) } }
                     label.field {
-                        "Your name"
-                        input type="text" name="name" maxlength=(NAME_MAX) required placeholder="Priya" autocomplete="given-name" value=(f.name);
+                        span { "Your name" (star()) }
+                        input type="text" name="name" maxlength=(NAME_MAX) required placeholder=(eg_name) autocomplete="given-name" value=(f.name);
                         span.hint { "Use the name the group knows you by. The host uses it to set “keep apart” rules." }
                     }
                     @if ask_email {
                         label.field {
                             @if g.require_email {
-                                "Your email"
+                                span { "Your email" (star()) }
                             } @else {
                                 span.row { "Your email" span.hint { "optional" } }
                             }
-                            input type="email" name="email" maxlength="254" required[g.require_email] placeholder="priya@example.com" autocomplete="email" value=(f.email);
+                            input type="email" name="email" maxlength="254" required[g.require_email] placeholder=(eg_email) autocomplete="email" value=(f.email);
                             span.hint { "We email you your personal link, and again when names are drawn. Only you get these emails." }
                         }
                     }
@@ -2602,7 +2690,7 @@ fn wishes_editor(m: &Member, back: &str) -> Markup {
                     "Wishes & hints"
                     textarea name="wishes" rows="5" maxlength=(WISHES_MAX) { (m.wishes) }
                 }
-                button.btn type="submit" { "Save wishes" }
+                button.btn type="submit" { (icon(CHECK)) "Save wishes" }
             }
         }
     }
@@ -2629,7 +2717,7 @@ fn waiting_page(g: &Group, m: &Member, base: &str) -> Markup {
                         h2 { "Your personal link" }
                         div.linkrow {
                             input type="text" readonly value=(my_url) aria-label="Your personal link";
-                            button.btn.primary type="button" data-copy=(my_url) { "Copy" }
+                            button.btn.primary type="button" data-copy=(my_url) { (icon(COPY)) span { "Copy" } }
                         }
                         p { "Bookmark it. It’s your way back to your gift tag, and to edit your wishes." }
                     }
@@ -2719,7 +2807,7 @@ fn tag_page(g: &Group, m: &Member, to: &Member, open: bool) -> Markup {
                         }
                     }
                     div.actions {
-                        a.btn href=(format!("/p/{}", m.token)) { "Hide it again" }
+                        a.btn href=(format!("/p/{}", m.token)) { (icon(BACK)) "Hide it again" }
                     }
                     section.panel.narrow #wishes {
                         h2 { "Your own wishes" }
@@ -2744,6 +2832,27 @@ const GIFT_BIG: &str = r##"<svg class="gift" viewBox="0 0 120 120" aria-hidden="
 
 const GIFT_BIG_TILTED: &str = r##"<svg class="giftbig" viewBox="0 0 120 120" aria-hidden="true"><rect x="18" y="52" width="84" height="58" rx="8" fill="#9B2C1F"/><circle cx="34" cy="70" r="4" fill="#E6D6B6" opacity="0.5"/><circle cx="86" cy="92" r="4" fill="#E6D6B6" opacity="0.5"/><circle cx="36" cy="98" r="4" fill="#E6D6B6" opacity="0.5"/><circle cx="84" cy="66" r="4" fill="#E6D6B6" opacity="0.5"/><rect x="12" y="36" width="96" height="22" rx="6" fill="#9B2C1F"/><rect x="12" y="54" width="96" height="4" fill="#000" opacity="0.12"/><rect x="52" y="36" width="16" height="74" fill="#C8962F"/><path d="M60 36 C44 10 20 20 32 32 C38 38 50 36 60 36 Z" fill="#C8962F"/><path d="M60 36 C76 10 100 20 88 32 C82 38 70 36 60 36 Z" fill="#C8962F"/></svg>"##;
 
+macro_rules! glyph {
+    ($path:literal) => {
+        concat!(
+            r##"<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">"##,
+            $path,
+            "</svg>"
+        )
+    };
+}
+const SHARE: &str = glyph!(r#"<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>"#);
+const USERS: &str = glyph!(r#"<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.4c2 .7 3.5 2.5 3.5 5.6"/>"#);
+const MAIL: &str = glyph!(r#"<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>"#);
+const TRASH: &str = glyph!(r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#);
+const COPY: &str = glyph!(r#"<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>"#);
+const SHUFFLE: &str = glyph!(r#"<path d="M3 7h4l10 10h4M3 17h4l3-3M14 10l3-3h4"/><path d="M19 5l2 2-2 2M19 15l2 2-2 2"/>"#);
+const PLUS: &str = glyph!(r#"<path d="M12 5v14M5 12h14"/>"#);
+const SEARCH: &str = glyph!(r#"<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>"#);
+const UNDO: &str = glyph!(r#"<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>"#);
+const BACK: &str = glyph!(r#"<path d="M19 12H5M11 6l-6 6 6 6"/>"#);
+const ARROW_RIGHT: &str = glyph!(r#"<path d="M5 12h14M13 6l6 6-6 6"/>"#);
+const QR: &str = glyph!(r#"<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v.01M14 21h.01M17 21h4v-4"/>"#);
 const GIFT_ICON: &str = r##"<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="5" rx="1"/><path d="M5 13v8h14v-8"/><path d="M12 8v13"/><path d="M12 8c-2-4-6-4-6-1.5S9 8 12 8zM12 8c2-4 6-4 6-1.5S15 8 12 8z"/></svg>"##;
 
 const LOCK: &str = r##"<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>"##;
@@ -2913,6 +3022,7 @@ mod tests {
             res.has("Hosted by Jamie")
                 && res.has("Your own page")
                 && res.has("Not enough people yet")
+                && !res.has("/draw")
         );
         assert!(
             res.has("Show QR code") && res.has("<svg"),
@@ -3648,8 +3758,9 @@ mod tests {
     #[tokio::test]
     async fn optional_emails_and_a_host_who_does_not_play() {
         let (r, path) = test_app_with(log_mail());
-        // "Require emails" unticked: the host gives one anyway, guests may not.
-        let (admin, invite) = start(&r, "group=Club&host=Ann&email=ann%40example.com").await;
+        // "Use emails" unticked: the host's email box is hidden, so one sent
+        // anyway is ignored; guests may give one.
+        let (_, invite) = start(&r, "group=Club&host=Ann&email=ann%40example.com").await;
         let page = get(&r, &invite).await;
         assert!(
             page.has("optional")
@@ -3657,25 +3768,37 @@ mod tests {
         );
         join(&r, &invite, "name=Bo").await;
         join(&r, &invite, "name=Cy&email=cy%40example.com").await;
-        join(&r, &invite, "name=Di").await;
         deliver(&r).await;
         let sent = outbox(&r);
         assert_eq!(
             sent.iter().map(|l| l.to.as_str()).collect::<Vec<_>>(),
-            ["ann@example.com", "cy@example.com"]
+            ["cy@example.com"],
+            "no email for the host"
         );
+
+        // A host who isn't playing still gets the admin link, and no email
+        // at the draw (they have no tag).
+        let (admin, invite) = start(
+            &r,
+            "group=Team&host=Ann&require_email=1&email=ann%40example.com",
+        )
+        .await;
+        for n in ["Bo", "Cy", "Di"] {
+            join(&r, &invite, &format!("name={n}&email={n}%40example.com")).await;
+        }
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(sent[0].to, "ann@example.com");
         assert!(
             sent[0].text.contains(&admin) && !sent[0].text.contains("/p/"),
             "admin link, no own page"
         );
-
-        // At the draw only people in it get an email.
         post(&r, &format!("{admin}/draw"), "").await;
         deliver(&r).await;
         let sent = outbox(&r);
         assert_eq!(
             sent.iter().map(|l| l.to.as_str()).collect::<Vec<_>>(),
-            ["cy@example.com"]
+            ["Bo@example.com", "Cy@example.com", "Di@example.com"]
         );
         let _ = fs::remove_file(path);
     }

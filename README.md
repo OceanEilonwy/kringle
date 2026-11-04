@@ -102,13 +102,13 @@ else (say `/etc`), the service refuses to start and says why in the log.
 Off by default. Turn it on in Services › Kringle › **Email** (or with the
 `KRINGLE_MAIL*` environment variables below).
 
-- The host chooses **Require emails** when starting a group (on by default).
+- The host chooses **Use emails** when starting a group (on by default).
   Then the host and everyone who joins must give an email address. With it
   off, the email box is optional.
 - The host gets their admin link (and their own page, if they're in the
   draw). Each guest gets their personal link when they join. The host does
   **not** get an email when someone joins.
-- **Locked out?** (`/locked-out`, linked from the start page): someone types
+- **Looking for a swap?** (`/locked-out`, linked from the start page): someone types
   their email and gets one message with every link tied to it, grouped by
   group: admin and invite links for groups they host, their personal link
   for groups they joined. The page answers the same whether or not the

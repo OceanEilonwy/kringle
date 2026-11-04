@@ -1,7 +1,7 @@
 # Email: decisions
 
 Made while building email support (October 2026), with the asker away. The
-brief: hosts choose "Require emails" (on by default); the host and guests
+brief: hosts choose "Use emails" (on by default); the host and guests
 give emails; everyone gets their link by email on joining or creating the
 group (the host gets nothing when someone joins); everyone gets an unwrap link
 when names are drawn; SMTP set by environment or LuCI; Tuta must work; keep
@@ -86,13 +86,13 @@ it simple, make failures easy to diagnose, and give the host a resend button.
 
 ## Behaviour
 
-- **Require emails is stored per group**, on by default for new groups.
+- **Use emails is stored per group**, on by default for new groups.
   Groups saved before this change load with it off, so nobody already in a
   group is stuck.
-- With Require emails off, the email box is shown as optional, and anyone who
+- With Use emails off, the email box is shown as optional, and anyone who
   fills it in still gets emails.
 - **A host who isn't in the draw** gives their email on the group (required
-  when Require emails is on, as agreed), gets the admin-link email, and isn't
+  when Use emails is on, as agreed), gets the admin-link email, and isn't
   emailed at the draw (they have no tag).
 - The host's email carries the admin link and invite link (and their own page
   if they play). Guests' emails never include the admin link.

@@ -1,14 +1,24 @@
-// The only JavaScript: copy buttons, confirmations and polling. Everything
+// The only JavaScript: copy and share buttons, confirmations and polling. Everything
 // works without it; it just saves some taps and refreshes. (Dialogs open
 // through the command/commandfor attributes; the fallback below is for
 // older browsers.)
 "use strict";
 (function () {
+  // Make a copy/share button wide enough for "Copied!" up front, so clicking
+  // it never resizes it.
+  function reserve(button) {
+    var label = button.querySelector("span") || button, old = label.textContent, w = button.offsetWidth;
+    label.textContent = "Copied!";
+    button.style.minWidth = Math.max(w, button.offsetWidth) + "px";
+    label.textContent = old;
+  }
+  document.querySelectorAll("[data-copy],[data-share]").forEach(reserve);
   function copy(text, button) {
     function done() {
-      var old = button.textContent;
-      button.textContent = "Copied!";
-      setTimeout(function () { button.textContent = old; }, 1600);
+      // Only the text changes, so the button keeps its icon.
+      var label = button.querySelector("span") || button, old = label.textContent;
+      label.textContent = "Copied!";
+      setTimeout(function () { label.textContent = old; }, 1600);
     }
     function fallback() {
       var t = document.createElement("textarea");
@@ -28,6 +38,16 @@
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-copy]");
     if (b) { e.preventDefault(); copy(b.getAttribute("data-copy"), b); }
+    // Share sheet where the browser has one (it needs https); else copy the link.
+    var s = e.target.closest("[data-share]");
+    if (s) {
+      e.preventDefault();
+      var url = s.getAttribute("data-share");
+      if (navigator.share) {
+        navigator.share({ title: s.getAttribute("data-share-title"), text: s.getAttribute("data-share-text"), url: url })
+          .catch(function (err) { if (err && err.name !== "AbortError") copy(url, s); });
+      } else copy(url, s);
+    }
     if (e.target.matches("input[readonly]")) e.target.select();
   });
   document.addEventListener("click", function (e) {
@@ -41,6 +61,14 @@
   document.addEventListener("submit", function (e) {
     var f = e.target.closest("form[data-confirm]");
     if (f && !window.confirm(f.getAttribute("data-confirm"))) e.preventDefault();
+  });
+  // Inputs that only apply while a checkbox is ticked (e.g. the host's email).
+  document.querySelectorAll("[data-enable-with]").forEach(function (input) {
+    var box = input.form && input.form.elements[input.getAttribute("data-enable-with")];
+    if (!box) return;
+    function sync() { input.disabled = !box.checked; }
+    box.addEventListener("change", sync);
+    sync();
   });
   function every(ms, fn) { setInterval(function () { if (!document.hidden) fn(); }, ms); }
   // Swap in fresh copies of a few elements (e.g. who's joined) from the same page.
