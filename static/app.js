@@ -1,5 +1,7 @@
 // The only JavaScript: copy buttons, confirmations and polling. Everything
-// works without it; it just saves some taps and refreshes.
+// works without it; it just saves some taps and refreshes. (Dialogs open
+// through the command/commandfor attributes; the fallback below is for
+// older browsers.)
 "use strict";
 (function () {
   function copy(text, button) {
@@ -27,6 +29,14 @@
     var b = e.target.closest("[data-copy]");
     if (b) { e.preventDefault(); copy(b.getAttribute("data-copy"), b); }
     if (e.target.matches("input[readonly]")) e.target.select();
+  });
+  document.addEventListener("click", function (e) {
+    // Tapping the dim area behind a dialog closes it.
+    if (e.target.tagName === "DIALOG") e.target.close();
+    if ("commandForElement" in HTMLButtonElement.prototype) return;
+    var b = e.target.closest("[commandfor]");
+    var d = b && document.getElementById(b.getAttribute("commandfor"));
+    if (d && d.showModal && b.getAttribute("command") === "show-modal") d.showModal();
   });
   document.addEventListener("submit", function (e) {
     var f = e.target.closest("form[data-confirm]");

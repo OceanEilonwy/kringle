@@ -55,7 +55,7 @@ main{position:relative;z-index:1;width:100%;max-width:720px;margin:0 auto;paddin
 
 label.field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:15px;font-weight:700}
 .hint{font-size:13px;font-weight:400;color:var(--muted)}
-input[type=text],textarea,select{width:100%;min-width:0;min-height:48px;padding:0 14px;border:2px solid var(--edge);border-radius:8px;background:var(--field);
+input[type=text],input[type=email],textarea,select{width:100%;min-width:0;min-height:48px;padding:0 14px;border:2px solid var(--edge);border-radius:8px;background:var(--field);
   box-shadow:inset 0 1px 2px rgba(80,60,30,.18);color:var(--ink);font:inherit;font-size:17px;font-weight:700}
 textarea{min-height:120px;padding:12px 14px;line-height:1.45;resize:vertical}
 input::placeholder,textarea::placeholder{color:#76624C;font-weight:400;opacity:1}
@@ -190,3 +190,26 @@ summary.link{display:inline-flex;align-items:center;min-height:44px;color:var(--
   .unwrap{min-width:0;width:100%}
 }
 .mailerr{display:block;overflow-wrap:anywhere}
+
+/* Admin page: compact panels, the invite hero, dialogs. */
+.intro.tight{gap:4px}
+.intro.tight h1{font-size:clamp(28px,5vw,38px)}
+.intro.tight a{color:var(--sky-accent)}
+.panel.tight{gap:10px;padding:16px 20px}
+.panel.tight h2{font-size:22px}
+.hero{display:flex;flex-direction:column;gap:12px;padding:20px 24px;border:4px groove #6E1D14;border-radius:15px;background:var(--red);color:var(--red-ink);box-shadow:var(--shadow)}
+.hero h2{font-size:32px;text-shadow:0 -1px 0 rgba(0,0,0,.35)}
+.hero .linkrow input{min-height:54px;font-size:16px}
+.hero .btn{min-height:54px;padding:0 24px;border-color:var(--gold);background:var(--gold-soft);font-size:17px}
+.hero summary.link{min-height:36px;color:var(--red-ink)}
+.strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:2px dashed var(--gold);border-radius:10px;background:var(--gold-soft);font-size:14px}
+.strip p{flex:1 1 160px}
+.strip.bad{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
+.btn.danger{border-color:#C0493A;color:var(--danger)}
+.pill.bad{background:var(--danger-soft);color:var(--danger)}
+dialog{width:min(480px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;padding:20px;border:4px groove var(--edge);border-radius:15px;
+  background:var(--stone) var(--fall);color:var(--ink);box-shadow:var(--shadow)}
+dialog[open]{display:flex;flex-direction:column;gap:14px}
+dialog::backdrop{background:rgba(20,10,0,.55)}
+dialog h2{font-size:24px}
+@media (max-width:560px){.hide-small{display:none}.hero{padding:16px 18px}}

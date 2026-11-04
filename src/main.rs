@@ -217,6 +217,8 @@ async fn main() {
         limiter: Mutex::new(HashMap::new()),
         mail,
         mail_wake: tokio::sync::Notify::new(),
+        outbox: Mutex::new(Vec::new()),
+        lockout: Mutex::new(HashMap::new()),
     });
     tokio::spawn(housekeeping(app.clone()));
     tokio::spawn(mail_worker(app.clone()));
@@ -291,6 +293,14 @@ enum Recipient {
 /// the person with its reason, for the host to see and resend.
 async fn deliver(app: &App) {
     let Some(transport) = &app.mail else { return };
+    // Links for people who are locked out: no group to record the result on,
+    // so a failure is only logged.
+    let letters = std::mem::take(&mut *app.outbox.lock().unwrap_or_else(|e| e.into_inner()));
+    for letter in letters {
+        if let Err(why) = transport.send(&letter).await {
+            eprintln!("kringle: links email failed: {why}");
+        }
+    }
     loop {
         let job = {
             let mut st = lock(app);
@@ -1140,6 +1150,11 @@ struct App {
     mail: Option<mail::Transport>,
     /// Wakes the mail worker after something was queued.
     mail_wake: tokio::sync::Notify,
+    /// Emails not tied to a group, waiting for the mail worker (the
+    /// "Locked out?" link emails).
+    outbox: Mutex<Vec<mail::Letter>>,
+    /// When each address, and each peer, last asked for its links.
+    lockout: Mutex<HashMap<String, u64>>,
 }
 
 impl App {
@@ -1209,6 +1224,11 @@ where
         ["g", t, "resend"] if post => resend(app, t),
         ["g", t, "delete"] if post => delete_group(app, t),
         ["deleted"] if get => page(deleted_page()),
+        ["locked-out"] if get => locked_out(app, None, ""),
+        ["locked-out"] if post => match read_form(body).await {
+            Ok(f) => locked_out_post(app, peer, &f),
+            Err(res) => *res,
+        },
         ["j", t] if get => join(app, t, h),
         ["j", t] if post => match read_form(body).await {
             Ok(f) => join_post(app, t, &f),
@@ -1235,6 +1255,7 @@ fn is_route(segs: &[&str]) -> bool {
         [""] | ["groups"]
             | ["g", _]
             | ["deleted"]
+            | ["locked-out"]
             | ["g", _, "rules" | "draw" | "undraw" | "delete" | "resend"]
             | ["g", _, "rules" | "people", _, "delete"]
             | ["j", _]
@@ -2004,19 +2025,20 @@ fn create_page(f: &CreateForm, error: Option<&str>, mail_on: bool) -> Markup {
                     "I’m in the draw too"
                 }
                 @if mail_on {
-                    label.field {
-                        "Your email"
-                        input type="email" name="email" maxlength="254" placeholder="rosa@example.com" autocomplete="email" value=(f.email);
-                        span.hint { "We email you your admin link. Needed when emails are required." }
-                    }
                     label.check {
                         input type="checkbox" name="require_email" value="1" checked[f.require_email];
                         "Require emails"
                     }
                     p.muted.small { "Everyone who joins gives an email and gets their link by email, and again when names are drawn." }
+                    label.field {
+                        "Your email"
+                        input type="email" name="email" maxlength="254" placeholder="rosa@example.com" autocomplete="email" value=(f.email);
+                        span.hint { "We email you your admin link. Needed when emails are required." }
+                    }
                 }
                 button.btn.primary.big type="submit" { (icon(GIFT_ICON)) "Create group" }
                 p.lock { (icon(LOCK)) "No accounts. You’ll get a private admin link. It’s the only key to your group, so keep it safe." }
+                @if mail_on { p.small { "Lost a link? " a href="/locked-out" { "Locked out?" } } }
             }
         },
     )
@@ -2078,35 +2100,29 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
     );
     let rules_open = rule_problem || matches!(error, Some(e) if !e.starts_with("Names are"));
     let rules_label = if g.rules.is_empty() {
-        "Keep some people apart (optional)".to_string()
+        "Draw settings (optional)".to_string()
     } else {
-        format!(
-            "Keep some people apart · {}",
-            plural(g.rules.len(), "rule", "rules")
-        )
+        format!("Draw settings · {}", plural(g.rules.len(), "rule", "rules"))
     };
     let opened = g.members.iter().filter(|m| m.opened).count();
     let my_page = g.host_member().map(|m| format!("/p/{}", m.token));
 
     layout(
         &format!("{} · Host · Kringle", g.name),
-        html! { span.badge { (icon(LOCK)) "Host view" } },
         html! {
-            div.intro {
-                span.plate { "Hosted by " (g.host) }
+            span.badge.hide-small { (icon(LOCK)) "Host view" }
+            button.btn.small.danger type="button" command="show-modal" commandfor="delete-dialog" { "Delete group" }
+        },
+        html! {
+            div.intro.tight {
                 h1.onsky { (g.name) }
-                @if !g.budget.is_empty() { p.onsky-muted { "$" (g.budget) " budget" } }
-            }
-            div.adminlink {
-                (icon(LOCK))
-                p { strong { "This page is your admin link." } " Bookmark it and keep it private." }
-                button.btn.small type="button" data-copy=(admin_url) { "Copy admin link" }
-            }
-            @if let Some(url) = &my_page {
-                p.plate.small { "You’re in the draw too. " a href=(url) { "Your own page" } " has your wishes and, later, your gift tag." }
+                p.onsky-muted {
+                    "Hosted by " (g.host)
+                    @if !g.budget.is_empty() { " · $" (g.budget) " budget" }
+                    @if let Some(url) = &my_page { " · " a href=(url) { "Your own page" } }
+                }
             }
             @if let Some(e) = error { p.error role="alert" { (e) } }
-            (mail_panel(g, &admin_path))
 
             @if let Some(at) = g.drawn {
                 section.drawn-card #draw {
@@ -2116,11 +2132,12 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     div.bar role="img" aria-label=(format!("{opened} of {n} opened")) {
                         span style=(format!("width: {}%", (opened * 100).checked_div(n).unwrap_or(0))) {}
                     }
-                    p { "Everyone sees only their own tag. You see who’s opened theirs, never who they got." }
+                    p.small { "You see who’s opened theirs, never who they got." }
                 }
+                (mail_strip(g, &admin_path))
                 section.panel {
                     details.disclose {
-                        summary { "See who’s opened their tag" }
+                        summary { "Who’s opened & more options" }
                         ul.rows {
                             @for m in &g.members {
                                 li {
@@ -2129,11 +2146,8 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                                 }
                             }
                         }
-                    }
-                    details.disclose {
-                        summary { "More options" }
                         div.inset {
-                            p { strong { "Someone lost their link?" } " They reopen the invite link on the same phone to get back in." }
+                            p { strong { "Someone lost their link?" } " They reopen the invite link on the same phone, or ask for it on the “Locked out?” page." }
                             p { strong { "Need to change the group?" } " Cancelling reopens joining. When you draw again, everyone gets a new tag." }
                             form method="post" action=(format!("{admin_path}/undraw")) data-confirm="Cancel the draw and reopen joining? Everyone’s gift tag disappears until you draw again." {
                                 button.btn type="submit" { "Cancel draw & reopen" }
@@ -2142,12 +2156,12 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     }
                 }
             } @else {
-                section.panel.step #invite {
-                    div.stephead { span.num aria-hidden="true" { "1" } h2 { "Invite people" } }
-                    p.muted { "Send this link to the group chat." }
+                section.hero #invite {
+                    h2 { "Invite people" }
+                    p { "Send this link to the group chat." }
                     div.linkrow {
                         input type="text" readonly value=(invite_url) aria-label="Invite link";
-                        button.btn.primary type="button" data-copy=(invite_url) { "Copy" }
+                        button.btn type="button" data-copy=(invite_url) { "Copy" }
                     }
                     details {
                         summary.link { "Show QR code" }
@@ -2155,35 +2169,52 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                     }
                 }
 
-                section.panel.step #people data-poll=(admin_path) data-poll-ids="count chips" {
-                    div.stephead {
-                        span.num aria-hidden="true" { "2" }
+                section.panel.tight #people data-poll=(admin_path) data-poll-ids="count chips manage-list" {
+                    div.row {
                         h2 { "Who’s in " span.count #count { "· " (n) } }
+                        button.btn.small type="button" command="show-modal" commandfor="people-dialog" { "Manage" }
                     }
                     ul.chips #chips {
                         @for m in &g.members { li title=(m.name) { (m.name) @if m.host { " (you)" } } }
                         @if g.members.is_empty() { li.empty { "Nobody yet" } }
                     }
-                    p.muted { "New people appear here as they join." }
-                    @if g.members.iter().any(|m| !m.host) {
-                        details {
-                            summary.link { "Edit list" }
-                            ul.rows {
-                                @for m in g.members.iter().filter(|m| !m.host) {
-                                    li {
-                                        span.name title=(m.name) { (m.name) }
-                                        form method="post" action=(format!("{admin_path}/people/{}/delete", m.id)) data-confirm=(format!("Remove {} from the group?", m.name)) {
-                                            button.btn.small type="submit" aria-label=(format!("Remove {}", m.name)) { "Remove" }
-                                        }
-                                    }
+                }
+                dialog #people-dialog aria-labelledby="people-title" {
+                    h2 #people-title { "Remove people" }
+                    ul.rows #manage-list {
+                        @for m in g.members.iter().filter(|m| !m.host) {
+                            li {
+                                span.name title=(m.name) { (m.name) }
+                                form method="post" action=(format!("{admin_path}/people/{}/delete", m.id)) data-confirm=(format!("Remove {} from the group?", m.name)) {
+                                    button.btn.small type="submit" aria-label=(format!("Remove {}", m.name)) { "Remove" }
                                 }
                             }
                         }
+                        @if !g.members.iter().any(|m| !m.host) { li.empty { span.muted { "Nobody to remove yet." } } }
                     }
+                    form method="dialog" { button.btn.small type="submit" { "Close" } }
                 }
 
-                section.panel.step #draw {
-                    div.stephead { span.num aria-hidden="true" { "3" } h2 { "Draw names" } }
+                (mail_strip(g, &admin_path))
+
+                section.panel.tight #draw {
+                    h2 { "Draw names" }
+                    @match &problem {
+                        None => p.ok {
+                            (icon(CHECK))
+                            span { "Ready to draw: " (plural(n, "person", "people")) @if !g.rules.is_empty() { ", " (plural(g.rules.len(), "rule", "rules")) } "." }
+                        },
+                        Some((title, text)) => div.problem role="alert" {
+                            (icon(WARN))
+                            span { strong { (title) } (text) }
+                        },
+                    }
+                    @if host_can_deduce {
+                        p.warn { "The group is small enough that once you see your own tag, you could work out who someone else got. Invite more people to keep it a surprise." }
+                    }
+                    form method="post" action=(format!("{admin_path}/draw")) data-confirm="Draw names now? Joining closes and everyone gets their gift tag." {
+                        button.btn.primary.big type="submit" disabled[!ready] { "Draw names" }
+                    }
                     details.disclose #rules open[rules_open] {
                         summary { (rules_label) }
                         div.inset {
@@ -2238,34 +2269,23 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
                             }
                         }
                     }
-                    @match &problem {
-                        None => p.ok {
-                            (icon(CHECK))
-                            span { "Ready to draw: " (plural(n, "person", "people")) @if !g.rules.is_empty() { ", " (plural(g.rules.len(), "rule", "rules")) } "." }
-                        },
-                        Some((title, text)) => div.problem role="alert" {
-                            (icon(WARN))
-                            span { strong { (title) } (text) }
-                        },
-                    }
-                    @if host_can_deduce {
-                        p.warn { "The group is small enough that once you see your own tag, you could work out who someone else got. Invite more people to keep it a surprise." }
-                    }
-                    form method="post" action=(format!("{admin_path}/draw")) data-confirm="Draw names now? Joining closes and everyone gets their gift tag." {
-                        button.btn.primary.big type="submit" disabled[!ready] { "Draw names" }
-                    }
                     p.muted.small { "Joining closes when you draw. You won’t see who got who." }
                 }
             }
 
-            section.panel {
-                details.disclose {
-                    summary { "Delete this group" }
-                    div.inset {
-                        p { "This removes the group, everyone’s wishes and the draw for good. All of its links stop working." }
-                        form method="post" action=(format!("{admin_path}/delete")) data-confirm=(format!("Delete “{}” and everything in it for good?", g.name)) {
-                            button.btn type="submit" { "Delete group" }
-                        }
+            div.strip {
+                (icon(LOCK))
+                p { strong { "This page is your admin link." } " Keep it private." }
+                button.btn.small type="button" data-copy=(admin_url) { "Copy admin link" }
+            }
+
+            dialog #delete-dialog aria-labelledby="delete-title" {
+                h2 #delete-title { "Delete this group" }
+                p { "This removes the group, everyone’s wishes and the draw for good. All of its links stop working." }
+                div.actions {
+                    form method="dialog" { button.btn type="submit" { "Keep it" } }
+                    form method="post" action=(format!("{admin_path}/delete")) {
+                        button.btn.danger type="submit" { "Delete group" }
                     }
                 }
             }
@@ -2273,9 +2293,10 @@ fn admin_page(g: &Group, base: &str, error: Option<&str>) -> Markup {
     )
 }
 
-/// How the emails went, with the reason for each failure and a resend
-/// button. Nothing when nobody in the group gave an email.
-fn mail_panel(g: &Group, admin_path: &str) -> Markup {
+/// How the emails went, as one line with a dialog behind it: who got what,
+/// the reason for each failure and a resend button. Nothing when nobody in
+/// the group gave an email.
+fn mail_strip(g: &Group, admin_path: &str) -> Markup {
     let people: Vec<(&str, &MailState)> = g
         .members
         .iter()
@@ -2296,14 +2317,20 @@ fn mail_panel(g: &Group, admin_path: &str) -> Markup {
             _ => None,
         })
         .collect();
+    let summary = html! {
+        (sent) " sent"
+        @if waiting > 0 { " · " (waiting) " sending" }
+        @if !failed.is_empty() { " · " (failed.len()) " failed" }
+    };
     html! {
-        section.panel #mail {
-            h2 { "Emails" }
-            p.muted {
-                (sent) " sent"
-                @if waiting > 0 { " · " (waiting) " sending" }
-                @if !failed.is_empty() { " · " (failed.len()) " failed" }
-            }
+        div.strip.bad[!failed.is_empty()] #mail {
+            @if failed.is_empty() { (icon(CHECK)) } @else { (icon(WARN)) }
+            p { strong { "Emails" } " " (summary) }
+            button.btn.small type="button" command="show-modal" commandfor="mail-dialog" { "Details" }
+        }
+        dialog #mail-dialog aria-labelledby="mail-title" {
+            h2 #mail-title { "Emails" }
+            p.muted { (summary) }
             @if !failed.is_empty() {
                 div.problem role="alert" {
                     (icon(WARN))
@@ -2318,8 +2345,171 @@ fn mail_panel(g: &Group, admin_path: &str) -> Markup {
                     button.btn type="submit" { "Resend failed emails" }
                 }
             }
+            ul.rows {
+                @for (name, state) in &people {
+                    li {
+                        span.name title=(name) { (name) }
+                        @match state {
+                            MailState::Sent => span.pill.yes { "Sent" },
+                            MailState::Failed(_) => span.pill.bad { "Failed" },
+                            _ => span.pill { "Sending" },
+                        }
+                    }
+                }
+            }
+            form method="dialog" { button.btn.small type="submit" { "Close" } }
         }
     }
+}
+
+/// One address may ask for its links this often, and one peer this often.
+const LOCKOUT_EMAIL_SECS: u64 = 10 * 60;
+const LOCKOUT_PEER_SECS: u64 = 10;
+
+/// Whether `key` may ask now; if so, remembers that it did.
+fn lockout_allowed(app: &App, key: String, gap: u64, at: u64) -> bool {
+    let mut seen = app.lockout.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() > 10_000 {
+        seen.retain(|_, last| at.saturating_sub(*last) < LOCKOUT_EMAIL_SECS);
+    }
+    match seen.get(&key) {
+        Some(last) if at.saturating_sub(*last) < gap => false,
+        _ => {
+            seen.insert(key, at);
+            true
+        }
+    }
+}
+
+fn locked_out(app: &App, error: Option<&str>, typed: &str) -> Res {
+    page(locked_out_page(app.mail.is_some(), error, typed, false))
+}
+
+/// "Locked out?": email whatever links belong to an address. The answer is
+/// the same whether or not the address is in any group, so this can't be
+/// used to find out who is.
+fn locked_out_post(app: &App, peer: Option<IpAddr>, form: &Form) -> Res {
+    if app.mail.is_none() {
+        return locked_out(app, None, "");
+    }
+    let typed = form.get("email");
+    let Some(email) = mail::clean_address(&typed) else {
+        return locked_out(app, Some("That email address doesn’t look right."), &typed);
+    };
+    let at = now();
+    if let Some(ip) = peer
+        && !lockout_allowed(app, format!("peer {ip}"), LOCKOUT_PEER_SECS, at)
+    {
+        return locked_out(app, Some("Too many tries. Wait a few seconds."), &typed);
+    }
+    // A repeat for the same address within the gap sends nothing, quietly.
+    if lockout_allowed(app, email.to_ascii_lowercase(), LOCKOUT_EMAIL_SECS, at) {
+        let letter = {
+            let st = lock(app);
+            links_letter(&st.data, &email, app.public_url.as_deref())
+        };
+        if let Some(letter) = letter {
+            app.outbox
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(letter);
+            app.mail_wake.notify_one();
+        }
+    }
+    page(locked_out_page(true, None, &email, true))
+}
+
+/// The email listing every link that belongs to `email`, by group, newest
+/// first; `None` when the address isn't in any group.
+fn links_letter(data: &Data, email: &str, public_url: Option<&str>) -> Option<mail::Letter> {
+    let is = |s: &str| !s.is_empty() && s.eq_ignore_ascii_case(email);
+    let mut groups: Vec<&Group> = data.groups.iter().rev().collect();
+    groups.sort_by_key(|g| std::cmp::Reverse(g.created));
+    let mut name = None;
+    let mut blocks = Vec::new();
+    for g in groups {
+        let base = public_url.unwrap_or(&g.base);
+        let mut lines = Vec::new();
+        let mut me = g.members.iter().filter(|m| is(&m.email));
+        let own = me.next();
+        let hosting = is(&g.host_email) || own.is_some_and(|m| m.host);
+        if !hosting && own.is_none() {
+            continue;
+        }
+        if is(&g.host_email) {
+            name.get_or_insert(g.host.as_str());
+        }
+        if let Some(m) = own {
+            name.get_or_insert(m.name.as_str());
+        }
+        if hosting {
+            lines.push(format!(
+                "You host this one. Your admin link (keep it private):\n{base}/g/{}",
+                g.admin
+            ));
+            if g.drawn.is_none() {
+                lines.push(format!(
+                    "Invite link, to send to the group:\n{base}/j/{}",
+                    g.invite
+                ));
+            }
+        }
+        if let Some(m) = own {
+            let what = if m.host {
+                "Your own page, for your wishes and your gift tag"
+            } else {
+                "Your personal link, for your wishes and your gift tag"
+            };
+            lines.push(format!("{what}:\n{base}/p/{}", m.token));
+        }
+        let state = if g.drawn.is_some() {
+            "names are drawn"
+        } else {
+            "names not drawn yet"
+        };
+        blocks.push(format!("{} ({state})\n\n{}", g.name, lines.join("\n\n")));
+    }
+    let name = name?;
+    Some(mail::Letter {
+        to_name: name.to_string(),
+        to: email.to_string(),
+        subject: "Your Kringle links".into(),
+        text: format!(
+            "Hi {},\n\nSomeone asked for the links to your gift swaps. Here they are, group by group. If that wasn’t you, ignore this email: nothing has changed.\n\n{}\n\nKeep these private: each link is the key to its page.\n\nKringle",
+            first_word(name),
+            blocks.join("\n\n— — —\n\n")
+        ),
+    })
+}
+
+fn locked_out_page(mail_on: bool, error: Option<&str>, typed: &str, sent: bool) -> Markup {
+    layout(
+        "Locked out? · Kringle",
+        html! { span.tagline { "Lost a link? Get it by email." } },
+        html! {
+            section.panel.stack {
+                h1 { "Locked out?" }
+                @if !mail_on {
+                    p { "This Kringle can’t send email, so it can’t resend links. Ask whoever runs it, or ask your host for yours." }
+                } @else if sent {
+                    p.ok { (icon(CHECK)) span { "If " strong { (typed) } " is in a gift swap here, its links are on the way. Check your spam folder too." } }
+                    p.muted.small { "You can ask again in a few minutes." }
+                } @else {
+                    p { "Enter the email you gave Kringle. We’ll send every link tied to it: admin links and invite links for groups you host, and your personal link for groups you joined." }
+                    @if let Some(e) = error { p.error role="alert" { (e) } }
+                    form.stack method="post" action="/locked-out" {
+                        label.field {
+                            "Your email"
+                            input type="email" name="email" maxlength="254" required placeholder="rosa@example.com" autocomplete="email" value=(typed);
+                        }
+                        button.btn.primary.big type="submit" { "Email me my links" }
+                    }
+                    p.muted.small { "Only works for groups where you gave an email." }
+                }
+                a href="/" { "Back to start" }
+            }
+        },
+    )
 }
 
 fn deleted_page() -> Markup {
@@ -2593,6 +2783,8 @@ mod tests {
             limiter: Mutex::new(HashMap::new()),
             mail,
             mail_wake: tokio::sync::Notify::new(),
+            outbox: Mutex::new(Vec::new()),
+            lockout: Mutex::new(HashMap::new()),
         });
         (app, path)
     }
@@ -2790,7 +2982,7 @@ mod tests {
         post(&r, &rules, "giver=4&receiver=1").await;
         let res = get(&r, &admin).await;
         assert!(
-            res.has("aria-label=\"can’t give to\"") && res.has("Keep some people apart · 2 rules")
+            res.has("aria-label=\"can’t give to\"") && res.has("Draw settings · 2 rules")
         );
         post(&r, &format!("{admin}/rules/1/delete"), "").await;
         assert!(!get(&r, &admin).await.has("aria-label=\"can’t give to\""));
@@ -2801,7 +2993,7 @@ mod tests {
         let res = get(&r, &admin).await;
         assert!(!res.has("title=\"Sam\"") && res.has("Jamie (you)"));
         assert!(
-            !res.has("can’t give to each other") && res.has("Keep some people apart (optional)")
+            !res.has("can’t give to each other") && res.has("Draw settings (optional)")
         );
         assert_eq!(get(&r, &sam).await.status, StatusCode::NOT_FOUND);
         assert!(
@@ -3103,6 +3295,72 @@ mod tests {
         // The allowance comes back over time.
         assert!(r.may_create(Some(a), now() + CREATE_EVERY_SECS));
         assert!(!r.may_create(Some(a), now() + CREATE_EVERY_SECS));
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn locked_out_emails_links_by_group_without_revealing_who_is_in() {
+        let (r, path) = test_app_with(Some(mail::Transport::Log(Default::default())));
+        let (a1, i1) = start(
+            &r,
+            "group=Office&host=Jo&plays=1&require_email=1&email=jo%40example.com",
+        )
+        .await;
+        let lu = join(&r, &i1, "name=Lu&email=lu%40example.com").await;
+        let (a2, i2) = start(
+            &r,
+            "group=Flat&host=Jo&require_email=1&email=JO%40example.com",
+        )
+        .await;
+        deliver(&r).await;
+        outbox(&r);
+
+        assert!(get(&r, "/locked-out").await.has("Email me my links"));
+        assert!(get(&r, "/").await.has("href=\"/locked-out\""));
+        let bad = post(&r, "/locked-out", "email=nope").await;
+        assert!(bad.has("doesn’t look right"));
+
+        // Same answer for a stranger, and nothing is sent to them.
+        let nobody = post(&r, "/locked-out", "email=who%40example.com").await;
+        assert!(nobody.has("on the way"));
+        deliver(&r).await;
+        assert!(outbox(&r).is_empty());
+
+        let res = post(&r, "/locked-out", "email=jo%40EXAMPLE.com").await;
+        assert!(res.has("on the way"));
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(sent.len(), 1);
+        let t = &sent[0].text;
+        assert_eq!(sent[0].to, "jo@EXAMPLE.com");
+        let (office, flat) = (t.find("Office").unwrap(), t.find("Flat").unwrap());
+        assert!(flat < office, "newest group first");
+        for link in [&a1, &i1, &a2, &i2] {
+            assert!(t.contains(&format!("http://kringle.test{link}\n")), "{link}");
+        }
+        assert!(!t.contains(&lu), "other people's links stay private");
+
+        // Asking again straight away sends nothing more.
+        post(&r, "/locked-out", "email=jo%40example.com").await;
+        deliver(&r).await;
+        assert!(outbox(&r).is_empty());
+
+        // A guest gets only their own link.
+        post(&r, "/locked-out", "email=lu%40example.com").await;
+        deliver(&r).await;
+        let sent = outbox(&r);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].text.contains(&format!("http://kringle.test{lu}\n")));
+        assert!(!sent[0].text.contains(&a1) && !sent[0].text.contains(&i1));
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn locked_out_page_without_email_says_so() {
+        let (r, path) = test_app();
+        assert!(get(&r, "/locked-out").await.has("can’t send email"));
+        assert!(post(&r, "/locked-out", "email=a%40b.co").await.has("can’t send email"));
+        assert!(!get(&r, "/").await.has("/locked-out"));
         let _ = fs::remove_file(path);
     }
 

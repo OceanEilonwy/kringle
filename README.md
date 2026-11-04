@@ -108,6 +108,11 @@ Off by default. Turn it on in Services › Kringle › **Email** (or with the
 - The host gets their admin link (and their own page, if they're in the
   draw). Each guest gets their personal link when they join. The host does
   **not** get an email when someone joins.
+- **Locked out?** (`/locked-out`, linked from the start page): someone types
+  their email and gets one message with every link tied to it, grouped by
+  group: admin and invite links for groups they host, their personal link
+  for groups they joined. The page answers the same whether or not the
+  address is known, and an address can ask once every 10 minutes.
 - When the host draws names, everyone in the draw gets an email with the link
   to unwrap their gift tag.
 - The host never sees anyone's address. Their page shows how many emails went
