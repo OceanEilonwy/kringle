@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=kringle
-PKG_VERSION:=0.4.0
+PKG_VERSION:=0.4.1
 PKG_RELEASE:=1
 
 PKG_LICENSE:=GPL-3.0-only
@@ -63,6 +63,8 @@ define Package/kringle/postinst
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
 rm -f /tmp/luci-indexcache* /tmp/luci-modulecache/* 2>/dev/null
 /etc/init.d/rpcd reload 2>/dev/null
+# An upgrade replaces the binary but the old one keeps running: restart it.
+/etc/init.d/kringle enabled && /etc/init.d/kringle restart 2>/dev/null
 exit 0
 endef
 
