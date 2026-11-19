@@ -2,8 +2,9 @@
 name = "kringle"
 version = "0.4.1"
 edition = "2024"
-# Tern and Tuta's SDK are GPL-3.0, and they are linked into the binary.
-license = "GPL-3.0-only"
+# Tern and Tuta's SDK are GPL-3.0 and linked into the binary, which GPL-3.0 section 13 allows
+# with AGPL-3.0 code.
+license = "AGPL-3.0-or-later"
 description = "A tiny Kris Kringle / Secret Santa gift swap server, small enough for a home router."
 
 [dependencies]

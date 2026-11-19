@@ -11,7 +11,7 @@ PKG_NAME:=kringle
 PKG_VERSION:=0.4.1
 PKG_RELEASE:=1
 
-PKG_LICENSE:=GPL-3.0-only
+PKG_LICENSE:=AGPL-3.0-or-later
 
 include $(INCLUDE_DIR)/package.mk
 
