@@ -1,5 +1,5 @@
-# The monokulo-nodo packages (kringle) for a release tag, attached to its GitHub release and published
-# in monokulo-nodo's feed. See nodo/README.md.
+# The monokulo-nodo packages (kringle) for a release tag, signed into this repository's own
+# feed and attached to its GitHub release. See nodo/README.md.
 name: nodo
 
 on:

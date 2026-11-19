@@ -104,8 +104,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/release.sh
 
-  # The monokulo-nodo packages for a version just released, attached to the same release and
-  # published in monokulo-nodo's feed (nodo/README.md). The tag release.sh makes starts no
+  # The monokulo-nodo packages for a version just released, signed into this repository's own
+  # feed and attached to the same release (nodo/README.md). The tag release.sh makes starts no
   # workflow of its own, being made with the workflow token, so it is called from here.
   nodo:
     needs: release
