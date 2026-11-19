@@ -1,0 +1,34 @@
+api_version = 1
+id = "kringle"
+version = "@VERSION@"
+# bin/kringle is a small launcher that puts the data file in the data directory, passes the
+# optional public address and maps the email settings, then executes libexec/kringle under the
+# same name.
+exec = [
+    "bin/kringle",
+    # Visitors arrive through the appliance's proxy, whose X-Forwarded-Proto and X-Forwarded-Host
+    # Kringle follows when it writes links.
+    "--addr", "127.0.0.1:8787",
+    "--keep-days", "$(kringle.keep_days)",
+]
+settings = "settings.lua"
+# All state is one JSON file, rewritten atomically after each change.
+stop_timeout_secs = 10
+health = { http = { url = "http://127.0.0.1:8787/" } }
+
+[storage]
+# Names, gift hints, email addresses and the draw.
+encrypted = true
+size_mib = 32
+
+[network]
+# Email to members and the host (invites, the draw, reminders) goes out through Tuta or an SMTP
+# server, both on the internet. Visitors are still served only through the proxy.
+outbound = "internet"
+
+[[web]]
+name = "web"
+upstream = "127.0.0.1:8787"
+suggested_subdomain = "kringle"
+# Links follow the address each browser used, unless a public address is set.
+multi_address = true

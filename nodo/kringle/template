@@ -1,0 +1,113 @@
+# Template file for 'kringle'
+#
+# Kringle, a Kris Kringle gift swap web app. A feed app, not a base system package: everything
+# lands in /opt/nodo/apps/kringle. It is a small Rust server (hyper, maud) with its pages, styles
+# and fonts compiled in, not a static site, so it runs as a service behind the web proxy.
+#
+# Upstream tests on stable and releases on an unpinned nightly; this uses packages/monokulo's
+# pinned nightly (without -Zbuild-std), so the toolchain distfiles and their checksums are shared.
+# Cargo.lock pins every crate, the git dependencies (Tern and uniffi) by full commits, and the
+# build runs with --locked.
+# The recipe lives in this repository's nodo/ and is released from its version tags:
+# monokulo-nodo's app-release workflow sets version= from the tag (v1.2.0 is 1.2.0), _commit= to
+# the tag's commit and the first checksum to that commit's GitHub tarball, then builds, checks
+# and attaches the packages to the tag's release. See nodo/README.md.
+#
+pkgname=kringle
+version=0.4.1
+revision=2
+_commit=07329500c7a958ddd9fac0141302e1db1f0be923
+_nightly=2026-11-07
+archs="aarch64 x86_64"
+hostmakedepends="gcc make pkg-config clang xz"
+short_desc="Kris Kringle gift swap web app"
+maintainer="monokulo-nodo <noreply@localhost>"
+# Nothing is installed under /usr/share/licenses because a feed package may only write inside its
+# own directory.
+license="GPL-3.0-only"
+homepage="https://github.com/OceanEilonwy/kringle"
+
+_dist=https://static.rust-lang.org/dist/${_nightly}
+case "$XBPS_MACHINE" in
+	x86_64)
+		_host=x86_64-unknown-linux-gnu
+		_rustc_sum=3640f7f7bf840e0125771d0618744929809240cd2b8e6cbc98f848efcf288337
+		_cargo_sum=ba7ae2159e90b2128418b91fb93a26bb76ffe72311d8c7255095458e2549b3e9
+		_std_sum=7b85b56d7169c076fa1e31de5a4e3052ff8400d887dd80f47aa69579e15c85f8
+		;;
+	aarch64)
+		_host=aarch64-unknown-linux-gnu
+		_rustc_sum=e748c5afe5c74476ef74aeac07df4b9a0e72d8eb97a9861d308268669ec3e1ff
+		_cargo_sum=73a59e3749c61ae0936d89774b8c11e883c1ff5195b196c6e5eecf29b44a9fb9
+		_std_sum=d0e22de77a8447490c359e7d6398feb21d4b5988c4c469c1b802d809f2d40610
+		;;
+	*) broken="no pinned toolchain for build machine $XBPS_MACHINE" ;;
+esac
+
+distfiles="https://github.com/OceanEilonwy/kringle/archive/${_commit}.tar.gz
+ ${_dist}/rustc-nightly-${_host}.tar.xz
+ ${_dist}/cargo-nightly-${_host}.tar.xz
+ ${_dist}/rust-std-nightly-${_host}.tar.xz"
+checksum="62d0e42b129bc0f3f8aad914414dfa8045addf8058636c954bad5af1aace0256
+ ${_rustc_sum}
+ ${_cargo_sum}
+ ${_std_sum}"
+
+if [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = aarch64 ]; then
+	distfiles+=" ${_dist}/rust-std-nightly-aarch64-unknown-linux-gnu.tar.xz"
+	checksum+=" d0e22de77a8447490c359e7d6398feb21d4b5988c4c469c1b802d809f2d40610"
+elif [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = x86_64 ]; then
+	distfiles+=" ${_dist}/rust-std-nightly-x86_64-unknown-linux-gnu.tar.xz"
+	checksum+=" 7b85b56d7169c076fa1e31de5a4e3052ff8400d887dd80f47aa69579e15c85f8"
+fi
+
+build_wrksrc="kringle-${_commit}"
+_app=opt/nodo/apps/kringle
+
+post_extract() {
+	local d
+	mkdir -p "${wrksrc}/toolchain"
+	for d in "${wrksrc}"/rustc-nightly-* "${wrksrc}"/cargo-nightly-* "${wrksrc}"/rust-std-nightly-*; do
+		[ -d "$d" ] || continue
+		"$d"/install.sh --prefix="${wrksrc}/toolchain" --disable-ldconfig >/dev/null
+	done
+}
+
+_toolchain_env() {
+	_tc="${wrksrc}/toolchain"
+	export PATH="${_tc}/bin:${PATH}"
+	export RUSTC="${_tc}/bin/rustc"
+	export CARGO="${_tc}/bin/cargo"
+	export CARGO_HOME="${XBPS_HOSTDIR}/feed-cargo"
+	export CARGO_BUILD_JOBS="${XBPS_MAKEJOBS}"
+	export HOST_CC=gcc HOST_CXX=g++
+	local t="${RUST_TARGET^^}" b="${RUST_BUILD^^}"
+	t="${t//-/_}"
+	b="${b//-/_}"
+	if [ "$CROSS_BUILD" ]; then
+		unset RUSTFLAGS
+		export "CARGO_TARGET_${b}_LINKER=gcc"
+		export PKG_CONFIG_ALLOW_CROSS=1
+	fi
+	export "CARGO_TARGET_${t}_LINKER=${CC}"
+}
+
+do_configure() {
+	_toolchain_env
+	"${_tc}/bin/rustc" -vV
+}
+
+do_build() {
+	_toolchain_env
+	"${CARGO}" build --release --locked --target "${RUST_TARGET}" --bin kringle
+}
+
+do_install() {
+	vmkdir ${_app}/bin 755
+	vmkdir ${_app}/libexec 755
+	install -m 755 target/${RUST_TARGET}/release/kringle "${DESTDIR}/${_app}/libexec/kringle"
+	install -m 755 "${FILESDIR}/kringle" "${DESTDIR}/${_app}/bin/kringle"
+	install -m 644 "${FILESDIR}/manifest.toml" "${DESTDIR}/${_app}/manifest.toml"
+	sed -i "s/@VERSION@/${version}/" "${DESTDIR}/${_app}/manifest.toml"
+	install -m 644 "${FILESDIR}/settings.lua" "${DESTDIR}/${_app}/settings.lua"
+}
