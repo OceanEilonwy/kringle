@@ -65,3 +65,7 @@ gh release create "$tag" "$@" openwrt/keys/kringle.pem \
 	--title "Kringle $version" \
 	--notes-file "$notes" \
 	--target "${GITHUB_SHA:-$(git rev-parse HEAD)}"
+
+# In CI, the new tag for the jobs after this one (openwrt.yml's nodo job builds its monokulo-nodo
+# packages).
+[ -z "${GITHUB_OUTPUT:-}" ] || echo "tag=$tag" >> "$GITHUB_OUTPUT"

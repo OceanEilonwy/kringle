@@ -1,0 +1,31 @@
+# The monokulo-nodo packages (kringle) for a release tag, attached to its GitHub release and published
+# in monokulo-nodo's feed. See nodo/README.md.
+name: nodo
+
+on:
+  # A tag pushed by hand. The tags scripts/release.sh makes in openwrt.yml start no workflow (they
+  # are made with the workflow token), so openwrt.yml calls app-release.yml itself after releasing.
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to build, such as v1.2.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nodo-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  nodo:
+    permissions:
+      contents: write
+    uses: OceanEilonwy/monokulo-nodo/.github/workflows/app-release.yml@main
+    with:
+      packages: kringle
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit

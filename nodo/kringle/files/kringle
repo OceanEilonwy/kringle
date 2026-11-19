@@ -1,0 +1,36 @@
+#!/bin/sh
+# Puts Kringle's data file in the data directory, which the sandbox mounts as $HOME, passes the
+# optional public address, maps the email settings, and becomes Kringle. A manifest's arguments
+# cannot name the data directory, and an optional setting with no value is simply absent from the
+# environment.
+#
+# The device passes settings as NODO_<NAME>; Kringle reads email settings as KRINGLE_<NAME>. Each
+# email setting is named after the variable it fills, so the mapping is a list. Secrets stay in
+# the environment, never in argv. Tern's Tuta SDK caches Tuta's type models in $HOME/cache, so a
+# start skips downloading them.
+#
+# This script keeps the name of the binary it starts, so `pkill -x kringle` matches whichever of
+# the two is running.
+set -eu
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] || {
+	echo "kringle launcher: HOME is not the data directory" >&2
+	exit 1
+}
+if [ -n "${NODO_PUBLIC_URL:-}" ]; then
+	set -- "$@" --public-url "$NODO_PUBLIC_URL"
+fi
+# Anything Kringle would read that the device did not set comes from nowhere.
+for name in $(env | sed -n 's/^\(KRINGLE_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+for name in MAIL MAIL_FROM MAIL_FROM_NAME TUTA_USER TUTA_PASSWORD \
+	SMTP_HOST SMTP_PORT SMTP_SECURITY SMTP_USER SMTP_PASSWORD; do
+	eval "value=\${NODO_$name-}"
+	[ -n "$value" ] && export "KRINGLE_$name=$value"
+done
+unset value
+for name in $(env | sed -n 's/^\(NODO_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+export XDG_CACHE_HOME="$HOME/cache"
+exec "$(dirname "$0")/../libexec/kringle" --data "$HOME/kringle.json" "$@"
